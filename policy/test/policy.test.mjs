@@ -297,3 +297,21 @@ test("tokens mix with owned records in one transaction", () => {
     ]),
   );
 });
+
+test("a seller lists, edits and closes an item, but never deletes it", () => {
+  const listing = `item/${ARTIST}/${ITEM}`;
+  assert.ok(accepts([{ key: listing, newValue: '{"title":"Berlin"}' }], [ARTIST]));
+  assert.ok(accepts([{ key: listing, oldValue: '{"title":"Berlin"}', newValue: '{"closed":true}' }], [ARTIST]));
+  assert.ok(!accepts([{ key: listing, oldValue: '{"closed":true}' }], [ARTIST]));
+  assert.ok(!accepts([{ key: listing, newValue: "forged" }], [ALICE]));
+  for (const key of [`item/${ARTIST}`, `item//${ITEM}`, `item/${ARTIST}/${ITEM}/1`, `item/${ARTIST}/250.800.0`, `item/${ARTIST}/01.1.0.x`]) {
+    assert.ok(!accepts([{ key, newValue: "x" }], [ARTIST]), key);
+  }
+});
+
+test("door staff check in a ticket under their own key", () => {
+  const STAFF = "staff-address";
+  assert.ok(accepts([{ key: `user/${ARTIST}/staff/${STAFF}`, newValue: "door" }], [ARTIST]));
+  assert.ok(accepts([{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }], [STAFF]));
+  assert.ok(!accepts([{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }], [ALICE]));
+});

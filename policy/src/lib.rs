@@ -1,15 +1,17 @@
 //! Transaction-scope validity policy for a Fanfare artist chain.
 //!
 //! Base consensus lets any signer write any general-state key. This policy
-//! allows three shapes of key:
+//! allows four shapes of key:
 //!
 //! - `user/<owner>/...`: the owner's own records.
 //! - `index/.../<owner>`: the owner's entry under a shared topic, so a topic
 //!   can be listed by prefix without knowing who wrote to it.
+//! - `item/<seller>/<item>`: the seller's listing of an item.
 //! - `own/<seller>/<item>/<serial>`: one token, whose value is its holder.
 //!
-//! For the first two, the owner segment must be one of the transaction's
-//! signers, and whoever owns a key may create, overwrite or delete it.
+//! For the first three, the owner or seller segment must be one of the
+//! transaction's signers, and the owner may create, overwrite or delete the
+//! key, except that a listing is never deleted.
 //!
 //! A token's item is `<price>.<supply>.<closes>.<name>`, so its terms travel
 //! with every token and need no state lookup. A token is created by buying it:
@@ -71,7 +73,7 @@ fn check_body(body: &[u8], height: u64) -> Option<()> {
         let action = action?;
         match token(action.key)? {
             Some(token) => check_token(body, signers, &action, &token, height)?,
-            None => check_owned(body, signers, action.key)?,
+            None => check_owned(body, signers, &action)?,
         }
     }
     // Each seller is paid for everything bought from them. The check runs once
@@ -98,13 +100,23 @@ fn check_body(body: &[u8], height: u64) -> Option<()> {
     Some(())
 }
 
-fn check_owned(body: &[u8], signers: usize, key: &[u8]) -> Option<()> {
-    let mut segments = key.split(|&byte| byte == b'/');
+fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
+    let mut segments = action.key.split(|&byte| byte == b'/');
     let owner = match segments.next()? {
         b"user" => segments.next()?,
         b"index" => {
             segments.next()?; // at least one topic segment
             segments.last()?
+        }
+        // A listing outlives its sales: tokens point at it, so it is never
+        // deleted.
+        b"item" => {
+            let seller = segments.next().filter(|seller| !seller.is_empty())?;
+            terms(segments.next()?)?;
+            if segments.next().is_some() || action.new_value.is_none() {
+                return None;
+            }
+            seller
         }
         _ => return None,
     };
@@ -144,12 +156,18 @@ fn token(key: &[u8]) -> Option<Option<Token<'_>>> {
     if segments.next().is_some() {
         return None;
     }
-    let mut terms = item.splitn(4, |&byte| byte == b'.');
-    let price = decimal(terms.next()?)?;
-    let supply = decimal(terms.next()?)?;
-    let closes = decimal(terms.next()?)?;
-    terms.next().filter(|name| !name.is_empty())?;
+    let (price, supply, closes) = terms(item)?;
     Some(Some(Token { seller, price, supply, closes, serial }))
+}
+
+/// An item's price, supply and closing height, from `<price>.<supply>.<closes>.<name>`.
+fn terms(item: &[u8]) -> Option<(u64, u64, u64)> {
+    let mut parts = item.splitn(4, |&byte| byte == b'.');
+    let price = decimal(parts.next()?)?;
+    let supply = decimal(parts.next()?)?;
+    let closes = decimal(parts.next()?)?;
+    parts.next().filter(|name| !name.is_empty())?;
+    Some((price, supply, closes))
 }
 
 /// The token an action buys, if it buys one. Run only on actions that have

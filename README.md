@@ -12,9 +12,10 @@ client is the app.
 
 ```
 user/<artist>/profile                       name, bio, avatar CID, encryption key
-user/<artist>/item/<item>                   listing: {kind, title, venue, date, media}
+item/<seller>/<item>                        listing: {kind, title, venue, date, media, closed?}
 user/<artist>/answer/<item>/<serial>        the artist's answer to a question
-user/<artist>/checkin/<item>/<serial>       ticket used at the door
+user/<artist>/staff/<staff>                 a door staff key the artist trusts
+index/checkin/<artist>/<item>/<serial>/<staff>   ticket used at the door
 
 own/<seller>/<item>/<serial>                a token; value = its current holder
 
@@ -34,6 +35,11 @@ chain's policy at launch and may use a different one; the client relies on
 the token rules below only when a chain runs this module.
 
 - `user/<owner>/…` and `index/…/<owner>`: the owner must sign.
+- `item/<seller>/<item>`: the seller must sign, and the item must be a valid
+  `<price>.<supply>.<closes>.<name>`. A listing can be edited but never
+  deleted, because its tokens point at it. To stop selling early, set
+  `closed: true` (the client stops offering it; the policy still sells until
+  `closes`, so a hard stop needs a near `closes`).
 - `own/…`, created (no old value): the serial is below the supply, the block
   is at or before `closes` unless it is 0, and the transaction credits the
   seller at least the prices of all tokens it buys from them.
@@ -41,7 +47,7 @@ the token rules below only when a chain runs this module.
 - `own/…`, deleted or emptied: refused.
 
 The client checks the rest: that the seller listed the item, and whether a
-ticket was checked in.
+ticket was checked in by the artist or by staff the artist lists.
 
 Build and test:
 
