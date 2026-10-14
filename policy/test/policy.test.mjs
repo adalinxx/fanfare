@@ -161,104 +161,88 @@ test("a malformed or unknown context is rejected", () => {
   assert.ok(!run(new Uint8Array(0)));
 });
 
-// Tokens. ARTIST sells; ALICE and BOB are fans.
+// Tokens. ARTIST mints and sells; ALICE and BOB are fans.
 const ARTIST = "artist-address";
-const ITEM = "250.800.0.berlin-night-1"; // price 250, supply 800, never closes
+const ITEM = "5.berlin-night-1"; // five tickets
 const own = (serial, item = ITEM, seller = ARTIST) => `own/${seller}/${item}/${serial}`;
 const pay = (from, to, amount) => [
   { owner: from, delta: -amount },
   { owner: to, delta: amount },
 ];
-const buy = (actions, { signers = [ALICE], accountActions = pay(ALICE, ARTIST, 250n), height } = {}) =>
-  accepts(actions, signers, { accountActions }, { height });
+const signedBy = (signers, actions, accountActions = []) => accepts(actions, signers, { accountActions });
 
-test("a fan buys a token by paying the seller its price", () => {
-  assert.ok(buy([{ key: own(0), newValue: ALICE }]));
-  assert.ok(buy([{ key: own(799), newValue: ALICE }]));
-  // Paying more than the price is a tip.
-  assert.ok(buy([{ key: own(5), newValue: ALICE }], { accountActions: pay(ALICE, ARTIST, 1000n) }));
-  // The first holder may be someone else: a gift.
-  assert.ok(buy([{ key: own(5), newValue: BOB }]));
-  // A free item needs no payment.
-  assert.ok(buy([{ key: own(0, "0.100.0.rsvp"), newValue: ALICE }], { accountActions: [] }));
+test("only the seller mints, below the supply", () => {
+  assert.ok(signedBy([ARTIST], [{ key: own(0), newValue: ARTIST }]));
+  assert.ok(signedBy([ARTIST], [{ key: own(4), newValue: `${ARTIST}@250` }]));
+  // Minting straight to a fan is a comp.
+  assert.ok(signedBy([ARTIST], [{ key: own(1), newValue: ALICE }]));
+  assert.ok(!signedBy([ARTIST], [{ key: own(5), newValue: ARTIST }]));
+  assert.ok(!signedBy([ARTIST], [{ key: own(0, "0.none"), newValue: ARTIST }]));
+  // A fan can't mint the artist's tickets, even paying for them.
+  assert.ok(!signedBy([ALICE], [{ key: own(0), newValue: ALICE }], pay(ALICE, ARTIST, 10n ** 6n)));
+  assert.ok(!signedBy([ALICE], [{ key: own(0), newValue: `${ARTIST}@250` }]));
 });
 
-test("a buy that underpays, or pays someone else, is refused", () => {
-  assert.ok(!buy([{ key: own(0), newValue: ALICE }], { accountActions: pay(ALICE, ARTIST, 249n) }));
-  assert.ok(!buy([{ key: own(0), newValue: ALICE }], { accountActions: [] }));
-  assert.ok(!buy([{ key: own(0), newValue: ALICE }], { accountActions: pay(ALICE, BOB, 250n) }));
-  // A debit from the seller is not a payment to them.
-  assert.ok(!buy([{ key: own(0), newValue: ALICE }], { accountActions: [{ owner: ARTIST, delta: -250n }] }));
+test("anyone takes a priced token by paying its holder", () => {
+  const offered = `${ARTIST}@250`;
+  assert.ok(signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: ALICE }], pay(ALICE, ARTIST, 250n)));
+  // Paying more is fine; the buyer may name someone else, or price it again.
+  assert.ok(signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: BOB }], pay(ALICE, ARTIST, 300n)));
+  assert.ok(signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: `${ALICE}@900` }], pay(ALICE, ARTIST, 250n)));
+  // A fan resells the same way.
+  assert.ok(signedBy([BOB], [{ key: own(2), oldValue: `${ALICE}@400`, newValue: BOB }], pay(BOB, ALICE, 400n)));
+  // A price of 0 is a giveaway.
+  assert.ok(signedBy([BOB], [{ key: own(2), oldValue: `${ALICE}@0`, newValue: BOB }]));
 });
 
-test("one payment covers only one price", () => {
+test("a take that underpays, or pays someone else, is refused", () => {
+  const offered = `${ARTIST}@250`;
+  assert.ok(!signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: ALICE }], pay(ALICE, ARTIST, 249n)));
+  assert.ok(!signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: ALICE }]));
+  assert.ok(!signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: ALICE }], pay(ALICE, BOB, 250n)));
+  // A debit from the holder is not a payment to them.
+  assert.ok(!signedBy([ALICE], [{ key: own(2), oldValue: offered, newValue: ALICE }], [{ owner: ARTIST, delta: -250n }]));
+});
+
+test("a token without a price can't be taken", () => {
+  assert.ok(!signedBy([BOB], [{ key: own(2), oldValue: ALICE, newValue: BOB }], pay(BOB, ALICE, 10n ** 6n)));
+});
+
+test("one payment covers one price, per holder", () => {
   const two = [
-    { key: own(1), newValue: ALICE },
-    { key: own(2), newValue: ALICE },
+    { key: own(1), oldValue: `${ARTIST}@250`, newValue: ALICE },
+    { key: own(2), oldValue: `${ARTIST}@250`, newValue: ALICE },
   ];
-  assert.ok(!buy(two));
-  assert.ok(buy(two, { accountActions: pay(ALICE, ARTIST, 500n) }));
-  // Two credits to the seller add up.
-  assert.ok(buy(two, { accountActions: [...pay(ALICE, ARTIST, 250n), { owner: ARTIST, delta: 250n }] }));
-  // Different items from one seller add up too.
-  const mixed = [
-    { key: own(1), newValue: ALICE },
-    { key: own(1, "40.50.0.tote"), newValue: ALICE },
+  assert.ok(!signedBy([ALICE], two, pay(ALICE, ARTIST, 250n)));
+  assert.ok(signedBy([ALICE], two, pay(ALICE, ARTIST, 500n)));
+  const twoHolders = [
+    { key: own(1), oldValue: `${ARTIST}@250`, newValue: ALICE },
+    { key: own(3), oldValue: `${BOB}@100`, newValue: ALICE },
   ];
-  assert.ok(!buy(mixed));
-  assert.ok(buy(mixed, { accountActions: pay(ALICE, ARTIST, 290n) }));
-});
-
-test("each seller is paid for their own tokens", () => {
-  const OTHER = "other-artist";
-  const both = [
-    { key: own(1), newValue: ALICE },
-    { key: own(1, ITEM, OTHER), newValue: ALICE },
-  ];
-  assert.ok(!buy(both, { accountActions: pay(ALICE, ARTIST, 500n) }));
+  assert.ok(!signedBy([ALICE], twoHolders, pay(ALICE, ARTIST, 350n)));
   assert.ok(
-    buy(both, {
-      accountActions: [{ owner: ALICE, delta: -500n }, { owner: ARTIST, delta: 250n }, { owner: OTHER, delta: 250n }],
-    }),
+    signedBy([ALICE], twoHolders, [{ owner: ALICE, delta: -350n }, { owner: ARTIST, delta: 250n }, { owner: BOB, delta: 100n }]),
   );
 });
 
-test("a seller may comp a token by paying themselves", () => {
-  assert.ok(buy([{ key: own(9), newValue: BOB }], { signers: [ARTIST], accountActions: pay(ARTIST, ARTIST, 250n) }));
-});
-
-test("the supply caps the serials", () => {
-  assert.ok(!buy([{ key: own(800), newValue: ALICE }]));
-  assert.ok(!buy([{ key: own(0, "250.0.0.none"), newValue: ALICE }]));
-});
-
-test("an item closes after its last block", () => {
-  const closing = "250.800.500.presale";
-  assert.ok(buy([{ key: own(0, closing), newValue: ALICE }], { height: 499n }));
-  assert.ok(buy([{ key: own(0, closing), newValue: ALICE }], { height: 500n }));
-  assert.ok(!buy([{ key: own(0, closing), newValue: ALICE }], { height: 501n }));
-  // 0 never closes.
-  assert.ok(buy([{ key: own(0), newValue: ALICE }], { height: 18446744073709551615n }));
-});
-
-test("the holder transfers a token, and nobody else can", () => {
-  assert.ok(accepts([{ key: own(3), oldValue: ALICE, newValue: BOB }], [ALICE]));
-  assert.ok(!accepts([{ key: own(3), oldValue: ALICE, newValue: BOB }], [BOB]));
-  assert.ok(!accepts([{ key: own(3), oldValue: ALICE, newValue: ARTIST }], [ARTIST]));
-  // A transfer is not a buy: no supply, closing or payment check.
-  assert.ok(accepts([{ key: own(3, "250.800.5.presale"), oldValue: ALICE, newValue: BOB }], [ALICE], {}, { height: 900n }));
-});
-
-test("a resale moves the token and the payment in one transaction", () => {
-  assert.ok(
-    accepts([{ key: own(3), oldValue: ALICE, newValue: BOB }], [ALICE, BOB], { accountActions: pay(BOB, ALICE, 400n) }),
-  );
+test("the holder transfers, prices and unprices a token, and nobody else can", () => {
+  assert.ok(signedBy([ALICE], [{ key: own(3), oldValue: ALICE, newValue: BOB }]));
+  assert.ok(signedBy([ALICE], [{ key: own(3), oldValue: ALICE, newValue: `${ALICE}@400` }]));
+  assert.ok(signedBy([ALICE], [{ key: own(3), oldValue: `${ALICE}@400`, newValue: `${ALICE}@350` }]));
+  assert.ok(signedBy([ALICE], [{ key: own(3), oldValue: `${ALICE}@400`, newValue: ALICE }]));
+  assert.ok(!signedBy([BOB], [{ key: own(3), oldValue: ALICE, newValue: BOB }]));
+  // The seller has no say once a token is sold.
+  assert.ok(!signedBy([ARTIST], [{ key: own(3), oldValue: ALICE, newValue: ARTIST }]));
+  // A transfer is not a mint: the supply doesn't apply to existing tokens' writes.
+  assert.ok(!signedBy([BOB], [{ key: own(3), oldValue: `${ALICE}@400`, newValue: `${BOB}` }], pay(BOB, ALICE, 399n)));
 });
 
 test("a token is never deleted or left without a holder", () => {
-  assert.ok(!accepts([{ key: own(3), oldValue: ALICE }], [ALICE]));
-  assert.ok(!accepts([{ key: own(3), oldValue: ALICE, newValue: "" }], [ALICE]));
-  assert.ok(!buy([{ key: own(3), newValue: "" }]));
+  assert.ok(!signedBy([ALICE], [{ key: own(3), oldValue: ALICE }]));
+  for (const newValue of ["", "@250", `${ALICE}@`, `${ALICE}@01`, `${ALICE}@-1`, `${ALICE}@1@2`]) {
+    assert.ok(!signedBy([ALICE], [{ key: own(3), oldValue: ALICE, newValue }]), newValue);
+  }
+  assert.ok(!signedBy([ARTIST], [{ key: own(0), newValue: "" }]));
 });
 
 test("a malformed token key is refused", () => {
@@ -268,50 +252,43 @@ test("a malformed token key is refused", () => {
     `own//${ITEM}/1`,
     `own/${ARTIST}/${ITEM}/01`, // one serial, one spelling
     `own/${ARTIST}/${ITEM}/-1`,
-    `own/${ARTIST}/${ITEM}/1.0`,
     `own/${ARTIST}/${ITEM}/18446744073709551616`,
-    `own/${ARTIST}/250.800.0/1`, // no name
-    `own/${ARTIST}/250.800.0./1`,
-    `own/${ARTIST}/250.800/1`,
-    `own/${ARTIST}/0250.800.0.x/1`,
-    `own/${ARTIST}/250.800.x.y/1`,
+    `own/${ARTIST}/5/1`, // no name
+    `own/${ARTIST}/5./1`,
+    `own/${ARTIST}/05.x/1`,
+    `own/${ARTIST}/x.y/1`,
     "own",
   ]) {
-    assert.ok(!buy([{ key, newValue: ALICE }], { accountActions: pay(ALICE, ARTIST, 10n ** 9n) }), key);
+    assert.ok(!signedBy([ARTIST], [{ key, newValue: ARTIST }]), key);
   }
   // A name may contain dots.
-  assert.ok(buy([{ key: own(0, "250.800.0.tour.2027"), newValue: ALICE }]));
+  assert.ok(signedBy([ARTIST], [{ key: own(0, "5.tour.2027"), newValue: ARTIST }]));
 });
 
 test("tokens mix with owned records in one transaction", () => {
+  const take = { key: own(4), oldValue: `${ARTIST}@250`, newValue: ALICE };
   assert.ok(
-    buy([
-      { key: own(4), newValue: ALICE },
-      { key: `user/${ALICE}/question/${ARTIST}/${ITEM}/4`, newValue: "What inspired the record?" },
-    ]),
+    signedBy([ALICE], [take, { key: `user/${ALICE}/question/${ARTIST}/${ITEM}/4`, newValue: "What inspired the record?" }], pay(ALICE, ARTIST, 250n)),
   );
   assert.ok(
-    !buy([
-      { key: own(4), newValue: ALICE },
-      { key: `user/${BOB}/question/${ARTIST}/${ITEM}/4`, newValue: "forged" },
-    ]),
+    !signedBy([ALICE], [take, { key: `user/${BOB}/question/${ARTIST}/${ITEM}/4`, newValue: "forged" }], pay(ALICE, ARTIST, 250n)),
   );
 });
 
 test("a seller lists, edits and closes an item, but never deletes it", () => {
   const listing = `item/${ARTIST}/${ITEM}`;
-  assert.ok(accepts([{ key: listing, newValue: '{"title":"Berlin"}' }], [ARTIST]));
-  assert.ok(accepts([{ key: listing, oldValue: '{"title":"Berlin"}', newValue: '{"closed":true}' }], [ARTIST]));
-  assert.ok(!accepts([{ key: listing, oldValue: '{"closed":true}' }], [ARTIST]));
-  assert.ok(!accepts([{ key: listing, newValue: "forged" }], [ALICE]));
-  for (const key of [`item/${ARTIST}`, `item//${ITEM}`, `item/${ARTIST}/${ITEM}/1`, `item/${ARTIST}/250.800.0`, `item/${ARTIST}/01.1.0.x`]) {
-    assert.ok(!accepts([{ key, newValue: "x" }], [ARTIST]), key);
+  assert.ok(signedBy([ARTIST], [{ key: listing, newValue: '{"title":"Berlin"}' }]));
+  assert.ok(signedBy([ARTIST], [{ key: listing, oldValue: '{"title":"Berlin"}', newValue: '{"closed":true}' }]));
+  assert.ok(!signedBy([ARTIST], [{ key: listing, oldValue: '{"closed":true}' }]));
+  assert.ok(!signedBy([ALICE], [{ key: listing, newValue: "forged" }]));
+  for (const key of [`item/${ARTIST}`, `item//${ITEM}`, `item/${ARTIST}/${ITEM}/1`, `item/${ARTIST}/5`, `item/${ARTIST}/05.x`]) {
+    assert.ok(!signedBy([ARTIST], [{ key, newValue: "x" }]), key);
   }
 });
 
 test("door staff check in a ticket under their own key", () => {
   const STAFF = "staff-address";
-  assert.ok(accepts([{ key: `user/${ARTIST}/staff/${STAFF}`, newValue: "door" }], [ARTIST]));
-  assert.ok(accepts([{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }], [STAFF]));
-  assert.ok(!accepts([{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }], [ALICE]));
+  assert.ok(signedBy([ARTIST], [{ key: `user/${ARTIST}/staff/${STAFF}`, newValue: "door" }]));
+  assert.ok(signedBy([STAFF], [{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }]));
+  assert.ok(!signedBy([ALICE], [{ key: `index/checkin/${ARTIST}/${ITEM}/4/${STAFF}`, newValue: "1" }]));
 });

@@ -17,16 +17,18 @@ user/<artist>/answer/<item>/<serial>        the artist's answer to a question
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
 index/checkin/<artist>/<item>/<serial>/<staff>   ticket used at the door
 
-own/<seller>/<item>/<serial>                a token; value = its current holder
+own/<seller>/<item>/<serial>                a token; value = <holder> or <holder>@<price>
 
 user/<fan>/question/<artist>/<item>/<serial>   question text
 user/<fan>/ship/<artist>/<item>/<serial>       shipping address, encrypted to the artist
 
-<item> = <price>.<supply>.<closes>.<name>      closes = last block on sale, 0 = never
+<item> = <supply>.<name>
 ```
 
-Numbers are plain decimals with no leading zeros. A Q&A session is an item
-whose price is the minimum tip and whose supply is the number of questions.
+Numbers are plain decimals with no leading zeros. The artist mints an item's
+tickets, usually at a price (`<artist>@250`); a fan buys one by paying that
+price, and can transfer it or sell it again at any price, forever. A Q&A
+session is an item whose tickets are question slots.
 
 ## Policy
 
@@ -36,18 +38,21 @@ the token rules below only when a chain runs this module.
 
 - `user/<owner>/…` and `index/…/<owner>`: the owner must sign.
 - `item/<seller>/<item>`: the seller must sign, and the item must be a valid
-  `<price>.<supply>.<closes>.<name>`. A listing can be edited but never
-  deleted, because its tokens point at it. To stop selling early, set
-  `closed: true` (the client stops offering it; the policy still sells until
-  `closes`, so a hard stop needs a near `closes`).
-- `own/…`, created (no old value): the serial is below the supply, the block
-  is at or before `closes` unless it is 0, and the transaction credits the
-  seller at least the prices of all tokens it buys from them.
-- `own/…`, changed (old value = holder): the holder must sign.
-- `own/…`, deleted or emptied: refused.
+  `<supply>.<name>`. A listing can be edited but never deleted, because its
+  tokens point at it.
+- `own/…`, minted (no old value): the seller signs and the serial is below
+  the supply, so every token is backed by its seller.
+- `own/…`, changed by its holder: anything (transfer, set or change a price,
+  take it off sale).
+- `own/…`, changed by anyone else: only if it has a price, and the
+  transaction credits the holder at least the prices of all tokens it takes
+  from them.
+- `own/…`, deleted, or left without a holder: refused.
 
-The client checks the rest: that the seller listed the item, and whether a
-ticket was checked in by the artist or by staff the artist lists.
+A buyer's transaction names the price it read as the old value, so if the
+holder changes the price first, the purchase is refused instead of paying a
+different price. The client checks the rest: whether a ticket was checked in
+by the artist or by staff the artist lists.
 
 Build and test:
 

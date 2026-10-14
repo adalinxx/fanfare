@@ -7,47 +7,42 @@
 //! - `index/.../<owner>`: the owner's entry under a shared topic, so a topic
 //!   can be listed by prefix without knowing who wrote to it.
 //! - `item/<seller>/<item>`: the seller's listing of an item.
-//! - `own/<seller>/<item>/<serial>`: one token, whose value is its holder.
+//! - `own/<seller>/<item>/<serial>`: one token.
 //!
 //! For the first three, the owner or seller segment must be one of the
 //! transaction's signers, and the owner may create, overwrite or delete the
 //! key, except that a listing is never deleted.
 //!
-//! A token's item is `<price>.<supply>.<closes>.<name>`, so its terms travel
-//! with every token and need no state lookup. A token is created by buying it:
-//! its serial is below the supply, the block is at or before `closes` (0 means
-//! never closes), and the same transaction credits the seller at least the
-//! prices of all the tokens it buys from them. After that only the holder named
-//! in the token's value may transfer it, and nobody may delete it. Consensus
-//! checks every declared old value against the chain, so the old value is the
-//! token's real holder and an empty one means the token does not exist yet.
+//! An item is `<supply>.<name>`. Only the seller mints its tokens, with serials
+//! below the supply, so every token is backed by its seller. A token's value is
+//! its holder, `<holder>`, or its holder with an asking price,
+//! `<holder>@<price>`. The holder may change a token in any way: transfer it,
+//! set or change a price, or take it off sale. Anyone else may take a token
+//! that has a price by paying the holder at least that price in the same
+//! transaction. Nobody may delete a token. Consensus checks every declared old
+//! value against the chain, so the old value is the token's real holder and
+//! price, and an empty one means the token does not exist yet.
 //!
-//! What the records mean is up to clients; in particular, whether an item is
-//! one the seller actually listed. Coin actions pass untouched.
+//! What the records mean is up to clients. Coin actions pass untouched.
 #![cfg_attr(not(test), no_std)]
 
 const MAGIC: &[u8] = b"LWPCTX";
 const CONTEXT_ENCODING_VERSION: u16 = 2;
 /// Magic, encoding version, ABI version, scope, height, timestamp.
 const HEADER_BYTES: usize = 6 + 2 + 2 + 1 + 8 + 8;
-const HEIGHT_AT: usize = 6 + 2 + 2 + 1;
 
 /// The verdict for one policy context. Anything malformed is a rejection.
 pub fn validate(context: &[u8]) -> bool {
-    transaction_body(context)
-        .and_then(|(height, body)| check_body(body, height))
-        .is_some()
+    transaction_body(context).and_then(check_body).is_some()
 }
 
-/// The block height and the transaction body.
-fn transaction_body(context: &[u8]) -> Option<(u64, &[u8])> {
+fn transaction_body(context: &[u8]) -> Option<&[u8]> {
     if context.get(..MAGIC.len())? != MAGIC {
         return None;
     }
     if u16::from_be_bytes(context.get(6..8)?.try_into().ok()?) != CONTEXT_ENCODING_VERSION {
         return None;
     }
-    let height = u64::from_be_bytes(context.get(HEIGHT_AT..HEIGHT_AT + 8)?.try_into().ok()?);
     let mut at = HEADER_BYTES;
     let (_spec, next) = length_prefixed(context, at)?;
     at = next;
@@ -59,10 +54,10 @@ fn transaction_body(context: &[u8]) -> Option<(u64, &[u8])> {
     if *context.get(at)? != 1 {
         return None;
     }
-    Some((height, length_prefixed(context, at + 1)?.0))
+    Some(length_prefixed(context, at + 1)?.0)
 }
 
-fn check_body(body: &[u8], height: u64) -> Option<()> {
+fn check_body(body: &[u8]) -> Option<()> {
     if skip(body, 0)? != body.len() {
         return None;
     }
@@ -72,28 +67,28 @@ fn check_body(body: &[u8], height: u64) -> Option<()> {
     for action in Actions::new(body, actions)? {
         let action = action?;
         match token(action.key)? {
-            Some(token) => check_token(body, signers, &action, &token, height)?,
+            Some(token) => check_token(body, signers, &action, &token)?,
             None => check_owned(body, signers, &action)?,
         }
     }
-    // Each seller is paid for everything bought from them. The check runs once
-    // per seller, at the seller's first purchase.
+    // Each holder is paid for every token taken from them. The check runs once
+    // per holder, at the first token taken from them.
     for (index, action) in Actions::new(body, actions)?.enumerate() {
-        let Some(seller) = purchase(&action?)?.map(|token| token.seller) else {
+        let Some((holder, _)) = purchase(body, signers, &action?)? else {
             continue;
         };
         let mut seen = false;
         let mut owed: u128 = 0;
         for (other, action) in Actions::new(body, actions)?.enumerate() {
-            match purchase(&action?)? {
-                Some(token) if token.seller == seller => {
+            match purchase(body, signers, &action?)? {
+                Some((payee, price)) if payee == holder => {
                     seen |= other < index;
-                    owed = owed.checked_add(token.price as u128)?;
+                    owed = owed.checked_add(price as u128)?;
                 }
                 _ => {}
             }
         }
-        if !seen && credited(body, credits, seller)? < owed {
+        if !seen && credited(body, credits, holder)? < owed {
             return None;
         }
     }
@@ -108,11 +103,11 @@ fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
             segments.next()?; // at least one topic segment
             segments.last()?
         }
-        // A listing outlives its sales: tokens point at it, so it is never
-        // deleted.
+        // A listing outlives its tokens' trades: they point at it, so it is
+        // never deleted.
         b"item" => {
             let seller = segments.next().filter(|seller| !seller.is_empty())?;
-            terms(segments.next()?)?;
+            supply(segments.next()?)?;
             if segments.next().is_some() || action.new_value.is_none() {
                 return None;
             }
@@ -123,23 +118,31 @@ fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
     is_signer(body, signers, owner)
 }
 
-fn check_token(body: &[u8], signers: usize, action: &Action, token: &Token, height: u64) -> Option<()> {
-    // Every write names a holder; a token is never deleted.
-    action.new_value.filter(|holder| !holder.is_empty())?;
+fn check_token(body: &[u8], signers: usize, action: &Action, token: &Token) -> Option<()> {
+    // Every write leaves a holder; a token is never deleted.
+    holding(action.new_value?)?;
     match action.old_value {
         None => {
-            let open = token.closes == 0 || height <= token.closes;
-            (token.serial < token.supply && open).then_some(())
+            if token.serial >= token.supply {
+                return None;
+            }
+            is_signer(body, signers, token.seller)
         }
-        Some(holder) => is_signer(body, signers, holder),
+        Some(old) => {
+            let (holder, price) = holding(old)?;
+            if is_signer(body, signers, holder).is_some() {
+                return Some(());
+            }
+            // Taken by someone else: allowed only at a price, and paid for in
+            // `check_body`.
+            price.map(|_| ())
+        }
     }
 }
 
 struct Token<'a> {
     seller: &'a [u8],
-    price: u64,
     supply: u64,
-    closes: u64,
     serial: u64,
 }
 
@@ -151,32 +154,44 @@ fn token(key: &[u8]) -> Option<Option<Token<'_>>> {
         return Some(None);
     }
     let seller = segments.next().filter(|seller| !seller.is_empty())?;
-    let item = segments.next()?;
+    let supply = supply(segments.next()?)?;
     let serial = decimal(segments.next()?)?;
     if segments.next().is_some() {
         return None;
     }
-    let (price, supply, closes) = terms(item)?;
-    Some(Some(Token { seller, price, supply, closes, serial }))
+    Some(Some(Token { seller, supply, serial }))
 }
 
-/// An item's price, supply and closing height, from `<price>.<supply>.<closes>.<name>`.
-fn terms(item: &[u8]) -> Option<(u64, u64, u64)> {
-    let mut parts = item.splitn(4, |&byte| byte == b'.');
-    let price = decimal(parts.next()?)?;
+/// An item's supply, from `<supply>.<name>`.
+fn supply(item: &[u8]) -> Option<u64> {
+    let mut parts = item.splitn(2, |&byte| byte == b'.');
     let supply = decimal(parts.next()?)?;
-    let closes = decimal(parts.next()?)?;
     parts.next().filter(|name| !name.is_empty())?;
-    Some((price, supply, closes))
+    Some(supply)
 }
 
-/// The token an action buys, if it buys one. Run only on actions that have
-/// already passed `check_body`'s first loop.
-fn purchase<'a>(action: &Action<'a>) -> Option<Option<Token<'a>>> {
-    if action.old_value.is_some() {
+/// A token value's holder and asking price: `<holder>` or `<holder>@<price>`.
+fn holding(value: &[u8]) -> Option<(&[u8], Option<u64>)> {
+    let mut parts = value.splitn(2, |&byte| byte == b'@');
+    let holder = parts.next().filter(|holder| !holder.is_empty())?;
+    match parts.next() {
+        None => Some((holder, None)),
+        Some(price) => Some((holder, Some(decimal(price)?))),
+    }
+}
+
+/// The holder a token is taken from and the price owed to them, if the action
+/// takes a token without the holder's signature. Run only on actions that
+/// have already passed `check_body`'s first loop.
+fn purchase<'a>(body: &[u8], signers: usize, action: &Action<'a>) -> Option<Option<(&'a [u8], u64)>> {
+    let (Some(old), Some(_)) = (action.old_value, token(action.key)?) else {
+        return Some(None);
+    };
+    let (holder, price) = holding(old)?;
+    if is_signer(body, signers, holder).is_some() {
         return Some(None);
     }
-    token(action.key)
+    Some(Some((holder, price?)))
 }
 
 /// A canonical unsigned decimal: digits only, no leading zero, fits in u64.

@@ -1,8 +1,9 @@
 // Ticket sales and transfers against a real node: a private host mines Nexus
-// and an artist chain running the built Fanfare policy. The artist lists an
-// item, a fan buys a ticket, transfers it, and every way of taking a ticket
-// without paying for it or holding it is refused. Last, a resale that moves
-// the ticket and the payment in one transaction signed by both people.
+// and an artist chain running the built Fanfare policy. The artist lists a
+// show and mints its tickets at a price; a fan buys one, transfers it, and
+// every way of taking a ticket without paying for it or holding it is refused.
+// Last, a fan resells a ticket at their own price to a buyer who completes it
+// alone.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node e2e/transfers.mjs
@@ -102,8 +103,10 @@ async function refused(label, signers, transaction) {
   console.log(`  refused: ${label} (${result.status} ${result.text.trim()})`);
 }
 
-const ITEM = "250.5.0.berlin-night-1"; // price 250, five tickets, never closes
+const ITEM = "5.berlin-night-1"; // five tickets
 const ticket = (serial) => `own/${artist.address}/${ITEM}/${serial}`;
+const listing = `item/${artist.address}/${ITEM}`;
+const atPrice = (who, price) => `${who.address}@${price}`;
 
 try {
   lattice("init");
@@ -134,17 +137,20 @@ try {
   await until("fans funded", async () => (await balance(bob)) === 2000n);
   console.log("artist and fans funded");
 
-  await admitted("listing", [artist], {
-    actions: [{ key: `item/${artist.address}/${ITEM}`, newValue: '{"kind":"ticket","title":"Berlin"}' }],
+  await admitted("listing and mint", [artist], {
+    actions: [
+      { key: listing, newValue: '{"kind":"ticket","title":"Berlin"}' },
+      ...[0, 1, 2, 3, 4].map((serial) => ({ key: ticket(serial), newValue: atPrice(artist, 250) })),
+    ],
     accountActions: fee(artist),
   });
-  await until("the listing is mined", async () => (await value(`item/${artist.address}/${ITEM}`)) !== undefined);
-  console.log("artist listed the show");
+  await until("the mint is mined", async () => (await value(ticket(4))) === atPrice(artist, 250));
+  console.log("artist listed the show and minted five tickets at 250");
 
-  // Primary sale.
+  // Primary sale: Alice alone signs and pays the artist.
   const before = await balance(artist);
   await admitted("Alice buys ticket 3", [alice], {
-    actions: [{ key: ticket(3), newValue: alice.address }],
+    actions: [{ key: ticket(3), oldValue: atPrice(artist, 250), newValue: alice.address }],
     accountActions: pay(alice, artist, 250n),
   });
   await until("Alice's ticket is mined", async () => (await value(ticket(3))) === alice.address);
@@ -152,39 +158,47 @@ try {
   console.log("Alice bought ticket 3; the artist was paid 250");
 
   // Ways of taking a ticket without paying for it or holding it.
-  await refused("Bob buys ticket 3 again", [bob], {
-    actions: [{ key: ticket(3), newValue: bob.address }],
+  await refused("Bob buys ticket 3 at its old price", [bob], {
+    actions: [{ key: ticket(3), oldValue: atPrice(artist, 250), newValue: bob.address }],
     accountActions: pay(bob, artist, 250n),
   });
-  await refused("Bob takes Alice's ticket", [bob], {
+  await refused("Bob takes Alice's unpriced ticket, paying her", [bob], {
     actions: [{ key: ticket(3), oldValue: alice.address, newValue: bob.address }],
-    accountActions: fee(bob),
+    accountActions: pay(bob, alice, 1000n),
   });
-  await refused("Bob buys ticket 5 of 5", [bob], {
+  await refused("Bob mints a sixth ticket", [bob], {
     actions: [{ key: ticket(5), newValue: bob.address }],
     accountActions: pay(bob, artist, 250n),
   });
+  await refused("the artist mints a sixth ticket", [artist], {
+    actions: [{ key: ticket(5), newValue: artist.address }],
+    accountActions: fee(artist),
+  });
   await refused("Bob underpays for ticket 4", [bob], {
-    actions: [{ key: ticket(4), newValue: bob.address }],
+    actions: [{ key: ticket(4), oldValue: atPrice(artist, 250), newValue: bob.address }],
     accountActions: pay(bob, artist, 249n),
   });
   await refused("Bob pays himself for ticket 4", [bob], {
-    actions: [{ key: ticket(4), newValue: bob.address }],
+    actions: [{ key: ticket(4), oldValue: atPrice(artist, 250), newValue: bob.address }],
     accountActions: [{ owner: bob.address, delta: -1n }],
   });
   await refused("Alice deletes her ticket", [alice], {
     actions: [{ key: ticket(3), oldValue: alice.address }],
     accountActions: fee(alice),
   });
+  await refused("the artist takes Alice's ticket back", [artist], {
+    actions: [{ key: ticket(3), oldValue: alice.address, newValue: artist.address }],
+    accountActions: fee(artist),
+  });
   await refused("the artist deletes the listing", [artist], {
-    actions: [{ key: `item/${artist.address}/${ITEM}`, oldValue: '{"kind":"ticket","title":"Berlin"}' }],
+    actions: [{ key: listing, oldValue: '{"kind":"ticket","title":"Berlin"}' }],
     accountActions: fee(artist),
   });
 
   // The same buyer can buy when they pay, so the refusals above were about the
   // ticket, not about Bob.
   await admitted("Bob buys ticket 4", [bob], {
-    actions: [{ key: ticket(4), newValue: bob.address }],
+    actions: [{ key: ticket(4), oldValue: atPrice(artist, 250), newValue: bob.address }],
     accountActions: pay(bob, artist, 250n),
   });
   await until("Bob's ticket is mined", async () => (await value(ticket(4))) === bob.address);
@@ -207,36 +221,24 @@ try {
     accountActions: fee(alice),
   });
 
-  // Resale: Bob sells ticket 3 back to Alice for 400 in one transaction both
-  // sign. A transaction carries one nonce, and it must be the next nonce of
-  // every signer.
-  const resale = {
+  // Resale: Bob prices ticket 3 at 400; Alice buys it alone.
+  await admitted("Bob prices ticket 3 at 400", [bob], {
+    actions: [{ key: ticket(3), oldValue: bob.address, newValue: atPrice(bob, 400) }],
+    accountActions: fee(bob),
+  });
+  await until("the price is mined", async () => (await value(ticket(3))) === atPrice(bob, 400));
+  await refused("Alice buys ticket 3 as if it were still unpriced", [alice], {
     actions: [{ key: ticket(3), oldValue: bob.address, newValue: alice.address }],
     accountActions: pay(alice, bob, 400n),
-  };
-  const [bobNonce, aliceNonce] = [await nonce(bob), await nonce(alice)];
-  console.log(`resale: Bob's next nonce is ${bobNonce}, Alice's is ${aliceNonce}`);
-  await refused("resale at Bob's nonce", [bob, alice], { ...resale, nonce: bobNonce });
-
-  // At the higher nonce the node holds the resale until the signer who is
-  // behind catches up.
-  const [behind, ahead] = bobNonce < aliceNonce ? [bob, alice] : [alice, bob];
-  const shared = await nonce(ahead);
+  });
   const bobBefore = await balance(bob);
-  await admitted("resale at the higher nonce", [bob, alice], { ...resale, nonce: shared });
-  const seen = new Set([(await read("/api/block/latest")).hash]);
-  await until("three more blocks", async () => seen.add((await read("/api/block/latest")).hash).size > 3);
-  assert.equal(await value(ticket(3)), bob.address);
-  console.log(`resale admitted at nonce ${shared}, still pending three blocks later`);
-
-  let catchUpFees = 0n;
-  for (let n = await nonce(behind); n < shared; n++) {
-    await admitted("catch-up", [behind], { accountActions: fee(behind), nonce: n });
-    catchUpFees += 1n;
-  }
+  await admitted("Alice buys ticket 3 from Bob", [alice], {
+    actions: [{ key: ticket(3), oldValue: atPrice(bob, 400), newValue: alice.address }],
+    accountActions: pay(alice, bob, 400n),
+  });
   await until("the resale is mined", async () => (await value(ticket(3))) === alice.address);
-  assert.equal(await balance(bob), bobBefore + 400n - (behind === bob ? catchUpFees : 0n));
-  console.log("the signer behind caught up; resale mined: ticket 3 is Alice's and Bob got 400");
+  assert.equal(await balance(bob), bobBefore + 400n);
+  console.log("Bob resold ticket 3 at his own price; Alice bought it alone and Bob got 400");
 } finally {
   try { lattice("mine", "stop"); } catch {}
   try { lattice("down"); } catch {}
