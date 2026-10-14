@@ -6,15 +6,16 @@
 //! - `user/<owner>/...`: the owner's own records.
 //! - `index/.../<owner>`: the owner's entry under a shared topic, so a topic
 //!   can be listed by prefix without knowing who wrote to it.
-//! - `item/<seller>/<item>`: the seller's listing of an item.
-//! - `own/<seller>/<item>/<serial>`: one token.
+//! - `item/<seller>/<name>`: the seller's listing of an item.
+//! - `own/<seller>/<id>`: one token, such as a ticket.
 //!
 //! For the first three, the owner or seller segment must be one of the
 //! transaction's signers, and the owner may create, overwrite or delete the
 //! key, except that a listing is never deleted.
 //!
-//! An item is `<supply>.<name>`. Only the seller mints its tokens, with serials
-//! below the supply, so every token is backed by its seller. A token's value is
+//! Only the seller mints a token, so every token is backed by its seller. The
+//! id is the seller's to choose, in one or more segments (for example
+//! `berlin-night-1/A12`, so a show's tickets share a prefix). A token's value is
 //! its holder, `<holder>`, or its holder with an asking price,
 //! `<holder>@<price>`. The holder may change a token in any way: transfer it,
 //! set or change a price, or take it off sale. Anyone else may take a token
@@ -106,9 +107,8 @@ fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
         // A listing outlives its tokens' trades: they point at it, so it is
         // never deleted.
         b"item" => {
-            let seller = segments.next().filter(|seller| !seller.is_empty())?;
-            supply(segments.next()?)?;
-            if segments.next().is_some() || action.new_value.is_none() {
+            let seller = named(&mut segments)?;
+            if action.new_value.is_none() {
                 return None;
             }
             seller
@@ -122,12 +122,7 @@ fn check_token(body: &[u8], signers: usize, action: &Action, token: &Token) -> O
     // Every write leaves a holder; a token is never deleted.
     holding(action.new_value?)?;
     match action.old_value {
-        None => {
-            if token.serial >= token.supply {
-                return None;
-            }
-            is_signer(body, signers, token.seller)
-        }
+        None => is_signer(body, signers, token.seller),
         Some(old) => {
             let (holder, price) = holding(old)?;
             if is_signer(body, signers, holder).is_some() {
@@ -142,8 +137,6 @@ fn check_token(body: &[u8], signers: usize, action: &Action, token: &Token) -> O
 
 struct Token<'a> {
     seller: &'a [u8],
-    supply: u64,
-    serial: u64,
 }
 
 /// The token a key names: `None` for a key outside `own/`, and a rejection
@@ -153,21 +146,21 @@ fn token(key: &[u8]) -> Option<Option<Token<'_>>> {
     if segments.next()? != b"own" {
         return Some(None);
     }
-    let seller = segments.next().filter(|seller| !seller.is_empty())?;
-    let supply = supply(segments.next()?)?;
-    let serial = decimal(segments.next()?)?;
-    if segments.next().is_some() {
-        return None;
-    }
-    Some(Some(Token { seller, supply, serial }))
+    Some(Some(Token { seller: named(&mut segments)? }))
 }
 
-/// An item's supply, from `<supply>.<name>`.
-fn supply(item: &[u8]) -> Option<u64> {
-    let mut parts = item.splitn(2, |&byte| byte == b'.');
-    let supply = decimal(parts.next()?)?;
-    parts.next().filter(|name| !name.is_empty())?;
-    Some(supply)
+/// `<owner>/<name>` from the remaining segments: a non-empty owner, then at
+/// least one segment, none of them empty. Returns the owner.
+fn named<'a>(segments: &mut impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> {
+    let owner = segments.next().filter(|owner| !owner.is_empty())?;
+    let mut count = 0;
+    for segment in segments {
+        if segment.is_empty() {
+            return None;
+        }
+        count += 1;
+    }
+    (count > 0).then_some(owner)
 }
 
 /// A token value's holder and asking price: `<holder>` or `<holder>@<price>`.
@@ -195,7 +188,7 @@ fn purchase<'a>(body: &[u8], signers: usize, action: &Action<'a>) -> Option<Opti
 }
 
 /// A canonical unsigned decimal: digits only, no leading zero, fits in u64.
-/// Canonical so that one serial cannot be spelled two ways.
+/// Canonical so that one price cannot be spelled two ways.
 fn decimal(digits: &[u8]) -> Option<u64> {
     if digits.is_empty() || (digits.len() > 1 && digits[0] == b'0') {
         return None;

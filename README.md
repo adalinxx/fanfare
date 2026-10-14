@@ -12,23 +12,23 @@ client is the app.
 
 ```
 user/<artist>/profile                       name, bio, avatar CID, encryption key
-item/<seller>/<item>                        listing: {kind, title, venue, date, media, closed?}
-user/<artist>/answer/<item>/<serial>        the artist's answer to a question
+item/<artist>/<name>                        listing: {kind, title, venue, date, media, closed?}
+user/<artist>/answer/<id>        the artist's answer to a question
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
-index/checkin/<artist>/<item>/<serial>/<staff>   ticket used at the door
+index/checkin/<artist>/<id>/<staff>   ticket used at the door
 
-own/<seller>/<item>/<serial>                a token; value = <holder> or <holder>@<price>
+own/<artist>/<id>                           a ticket; value = <holder> or <holder>@<price>
 
-user/<fan>/question/<artist>/<item>/<serial>   question text
-user/<fan>/ship/<artist>/<item>/<serial>       shipping address, encrypted to the artist
-
-<item> = <supply>.<name>
+user/<fan>/question/<artist>/<id>   question text
+user/<fan>/ship/<artist>/<id>       shipping address, encrypted to the artist
 ```
 
-Numbers are plain decimals with no leading zeros. The artist mints an item's
-tickets, usually at a price (`<artist>@250`); a fan buys one by paying that
-price, and can transfer it or sell it again at any price, forever. A Q&A
-session is an item whose tickets are question slots.
+Each ticket is its own token, named by the artist, for example
+`berlin-night-1/A12`; a show's tickets share its listing's name as a prefix.
+The artist mints tickets, usually at a price (`<artist>@250`); a fan buys one
+by paying that price, and can transfer it or sell it again at any price,
+forever. Prices are plain decimals with no leading zeros. A Q&A session is a
+listing whose tickets are question slots.
 
 ## Policy
 
@@ -37,11 +37,11 @@ chain's policy at launch and may use a different one; the client relies on
 the token rules below only when a chain runs this module.
 
 - `user/<owner>/…` and `index/…/<owner>`: the owner must sign.
-- `item/<seller>/<item>`: the seller must sign, and the item must be a valid
-  `<supply>.<name>`. A listing can be edited but never deleted, because its
-  tokens point at it.
-- `own/…`, minted (no old value): the seller signs and the serial is below
-  the supply, so every token is backed by its seller.
+- `item/<artist>/<name>`: the artist must sign. A listing can be edited but
+  never deleted, because its tickets point at it.
+- `own/…`, minted (no old value): the artist signs, so every ticket is backed
+  by the artist. Nothing caps how many; fans see every ticket minted under a
+  show's prefix.
 - `own/…`, changed by its holder: anything (transfer, set or change a price,
   take it off sale).
 - `own/…`, changed by anyone else: only if it has a price, and the

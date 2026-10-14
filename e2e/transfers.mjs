@@ -103,9 +103,9 @@ async function refused(label, signers, transaction) {
   console.log(`  refused: ${label} (${result.status} ${result.text.trim()})`);
 }
 
-const ITEM = "5.berlin-night-1"; // five tickets
-const ticket = (serial) => `own/${artist.address}/${ITEM}/${serial}`;
-const listing = `item/${artist.address}/${ITEM}`;
+const SHOW = "berlin-night-1";
+const ticket = (seat) => `own/${artist.address}/${SHOW}/${seat}`;
+const listing = `item/${artist.address}/${SHOW}`;
 const atPrice = (who, price) => `${who.address}@${price}`;
 
 try {
@@ -166,13 +166,9 @@ try {
     actions: [{ key: ticket(3), oldValue: alice.address, newValue: bob.address }],
     accountActions: pay(bob, alice, 1000n),
   });
-  await refused("Bob mints a sixth ticket", [bob], {
+  await refused("Bob mints a ticket for the artist's show", [bob], {
     actions: [{ key: ticket(5), newValue: bob.address }],
     accountActions: pay(bob, artist, 250n),
-  });
-  await refused("the artist mints a sixth ticket", [artist], {
-    actions: [{ key: ticket(5), newValue: artist.address }],
-    accountActions: fee(artist),
   });
   await refused("Bob underpays for ticket 4", [bob], {
     actions: [{ key: ticket(4), oldValue: atPrice(artist, 250), newValue: bob.address }],
