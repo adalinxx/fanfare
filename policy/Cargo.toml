@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-lattice-policy-rules = { path = "../../lattice-profile/rules" }
+lattice-policy-rules = { path = "../../moniker/rules" }
 
 [profile.release]
 opt-level = "z"
