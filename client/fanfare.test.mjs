@@ -185,7 +185,7 @@ test("a paid question: the slot's holder asks, the artist answers", async () => 
   assert.equal((await read.listing(c.state, ARTIST, "qa-oct")).kind, "qa");
 });
 
-test("the door: the holder answers a challenge and trusted staff check in", async () => {
+test("the door: the holder's pass gets them in once, and only trusted staff check in", async () => {
   const c = await show();
   const fan = sdk.accountFromPrivateKey(sdk.generatePrivateKey());
   const other = sdk.accountFromPrivateKey(sdk.generatePrivateKey());
@@ -193,16 +193,27 @@ test("the door: the holder answers a challenge and trusted staff check in", asyn
   const ticket = await read.ticket(c.state, ARTIST, "berlin/guest");
 
   const ORIGIN = "https://fanfare.example";
-  const text = door.challenge(ARTIST, ticket.id);
-  const answer = (who, origin = ORIGIN) => door.prove(walletOf(who, origin), text);
-  assert.ok(await door.verify(sdk, ORIGIN, text, await answer(fan), ticket));
-  assert.ok(!(await door.verify(sdk, ORIGIN, text, await answer(other), ticket)), "not the holder");
-  assert.ok(!(await door.verify(sdk, ORIGIN, text, await answer(fan, "https://other.example"), ticket)), "asked by another site");
-  const old = await door.prove(walletOf(fan, ORIGIN), door.challenge(ARTIST, ticket.id));
-  assert.ok(!(await door.verify(sdk, ORIGIN, text, old, ticket)), "an answer to another challenge");
+  const NOW = 1_800_000_000_000;
+  const passOf = async (who, { origin = ORIGIN, at = NOW, id = ticket.id } = {}) =>
+    door.readPass(await door.pass(walletOf(who, origin), ARTIST, id, at));
+  const verdict = async (scanned, now = NOW) => (await door.check(sdk, ORIGIN, scanned, ticket, [], now)).reason;
+  assert.deepEqual(await door.check(sdk, ORIGIN, await passOf(fan), ticket, [], NOW), { ok: true });
+  assert.equal(await verdict(await passOf(fan), NOW + door.PASS_LIFETIME_MS - 1000), undefined);
+  assert.equal(await verdict(await passOf(fan), NOW + door.PASS_LIFETIME_MS + 1000), "expired");
+  assert.equal(await verdict(await passOf(other)), "not-holder");
+  assert.equal(await verdict(await passOf(fan, { origin: "https://other.example" })), "not-holder", "signed for another site");
+  assert.equal(await verdict(await passOf(fan, { id: "berlin/A1" })), "no-ticket", "a pass for another ticket");
+  // A pass whose time was edited no longer verifies.
+  const edited = { ...(await passOf(fan)), time: String(NOW / 1000 + 30) };
+  assert.equal(await verdict(edited), "not-holder");
+  const scanned = await passOf(fan);
+  const text = door.passText(ARTIST, ticket.id, scanned.time);
   const transactionSignature = { publicKey: fan.publicKey, signature: sdk.signPreimage(text, fan.privateKey) };
-  assert.ok(!(await door.verify(sdk, ORIGIN, text, transactionSignature, ticket)), "a transaction-domain signature");
-  assert.ok(!(await door.verify(sdk, ORIGIN, text, { publicKey: "zz", signature: "00" }, ticket)));
+  assert.equal(await verdict({ ...scanned, proof: transactionSignature }), "not-holder", "a transaction-domain signature");
+  assert.equal(await verdict({ ...scanned, proof: { publicKey: "zz", signature: "00" } }), "not-holder");
+  assert.equal((await door.check(sdk, ORIGIN, scanned, ticket, ["staff"], NOW)).reason, "used");
+  assert.equal(door.readPass("hello"), undefined);
+  assert.equal(door.readPass('fanfare-pass:{"a":"x"}'), undefined);
 
   assert.ok(await c.write(ARTIST, write.staff(ARTIST, STAFF)));
   assert.ok(await c.write(STAFF, write.checkin(STAFF, ARTIST, ticket.id)));

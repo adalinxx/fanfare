@@ -8,8 +8,8 @@
 // Alice buys the artist's coin on the market, buys a ticket, and resells it
 // to Bob, whose earlier try at the same ticket the client explains. She buys
 // a Q&A slot and asks; the artist answers. She buys a shirt and leaves a
-// shipping address only the artist opens. At the door, Bob's wallet answers
-// the challenge and the artist's staff checks him in.
+// shipping address only the artist opens. At the door, Bob's wallet
+// signs a pass, the artist's staff checks him in, and the pass won't work twice.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node e2e/journey.mjs
@@ -252,15 +252,17 @@ try {
   assert.deepEqual(await ship.open((await ship.artistKey(walletOf(artist))).privateKey, shipment.sealed), address);
   console.log("Alice bought the shirt; only the artist's wallet opens her address");
 
-  // The door: Bob answers the challenge for A1 with his wallet; Alice can't.
-  const challenge = door.challenge(artist.address, `${SHOW}/A1`);
+  // The door: Bob's wallet signs a pass for A1; Alice's can't stand in for it.
   const ticket = await ticketOf(`${SHOW}/A1`);
-  assert.ok(await door.verify(sdk, ORIGIN, challenge, await door.prove(walletOf(bob), challenge), ticket));
-  assert.ok(!(await door.verify(sdk, ORIGIN, challenge, await door.prove(walletOf(alice), challenge), ticket)));
+  const atDoor = async (who) => door.check(sdk, ORIGIN, door.readPass(await door.pass(walletOf(who), artist.address, ticket.id)),
+    await ticketOf(ticket.id), await read.checkins(await state(), artist.address, ticket.id));
+  assert.deepEqual(await atDoor(bob), { ok: true });
+  assert.equal((await atDoor(alice)).reason, "not-holder");
   await lands("staff checks Bob in", staff, { actions: await write.changes(await state(), write.checkin(staff.address, artist.address, `${SHOW}/A1`)) },
     async () => (await read.checkins(await state(), artist.address, `${SHOW}/A1`)).length === 1);
   assert.deepEqual(await read.checkins(await state(), artist.address, `${SHOW}/A1`), [staff.address]);
-  console.log("at the door Bob's wallet answered the challenge, Alice's didn't, and staff checked him in");
+  assert.equal((await atDoor(bob)).reason, "used");
+  console.log("at the door Bob's pass let him in, Alice's didn't, and once checked in his pass is turned away");
 
   assert.deepEqual((await read.held(await state(), artist.address, alice.address)).map((t) => t.id), ["qa/1", "shirt/1"]);
   assert.deepEqual((await read.held(await state(), artist.address, bob.address)).map((t) => t.id), [`${SHOW}/A1`]);

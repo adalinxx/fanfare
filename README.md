@@ -113,8 +113,10 @@ pays the premine to `--premine-to`. Names are first come.
 - `ship.mjs` seals a shipping address to the artist. The artist's key comes
   from their wallet signing a fixed text, so Fanfare stores no key and the
   same account always gets the same key back.
-- `door.mjs` is the door check: a one-time challenge the holder's wallet
-  signs (`signMessage`), bound to Fanfare's origin.
+- `door.mjs` is the door check: the holder's wallet signs a pass for the
+  ticket and the time (`signMessage`, bound to Fanfare's origin), shown as a
+  QR code. Staff scan it, and it is good for two minutes and until the
+  ticket is checked in.
 
 The client tests run every transaction they build through the built policy
 before applying it:
