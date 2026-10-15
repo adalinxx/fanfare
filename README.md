@@ -54,6 +54,23 @@ holder changes the price first, the purchase is refused instead of paying a
 different price. The client checks the rest: whether a ticket was checked in
 by the artist or by staff the artist lists.
 
+## Launch
+
+An artist launches their chain from their own node. The app proposes the spec
+in `chain/spec.json` (`client/launch.mjs` builds it): rewards start at 1,000
+and halve every 210,000 blocks, and the premine is 21,000 blocks' rewards,
+21,000,000 coin, paid to the artist at genesis. Every field is the artist's
+to change, the policy included.
+
+```
+lattice child create Nexus/fanfare            # once, if the node doesn't host it yet
+lattice child create Nexus/fanfare/<name> --spec spec.json \
+  --policy-module fanfare_policy.wasm --premine-to <artist address>
+```
+
+The node mines the chain's genesis in its next template, and that genesis
+pays the premine to `--premine-to`. Names are first come.
+
 ## Client
 
 `client/` is the app's library; it runs in a page or in Node.
@@ -65,6 +82,7 @@ by the artist or by staff the artist lists.
 - `write.mjs` builds the writes: listings, minting, buying, pricing,
   transfers, questions, answers, staff and check-ins. A ticket change names
   the value the writer read, so a stale view is refused, never misapplied.
+- `launch.mjs` is the default spec, its premine and the create command.
 - `door.mjs` is the door check: a one-time challenge the holder's key signs.
 
 The client tests run every transaction they build through the built policy

@@ -1,24 +1,26 @@
-// Ticket sales and transfers against a real node: a private host mines Nexus
-// and an artist chain running the built Fanfare policy. The artist lists a
-// show and mints its tickets at a price; a fan buys one, transfers it, and
-// every way of taking a ticket without paying for it or holding it is refused.
-// Last, a fan resells a ticket at their own price to a buyer who completes it
-// alone.
+// An artist's launch and ticket sales against a real node: a private host
+// mines Nexus, the Fanfare home chain, and an artist chain launched from the
+// app's default spec, whose genesis pays the premine to the artist. The
+// artist funds two fans from it, lists a show and mints its tickets at a
+// price; a fan buys one, transfers it, and every way of taking a ticket
+// without paying for it or holding it is refused. Last, a fan resells a
+// ticket at their own price to a buyer who completes it alone.
 //
-//   LATTICE=<lattice-node>/.build/debug/lattice \
+//   LATTICE=<lattice-node with --premine-to>/.build/debug/lattice \
 //   LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node e2e/transfers.mjs
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import * as launch from "../client/launch.mjs";
 import * as read from "../client/read.mjs";
 import { chainSpec, tip, view, volumeLoader } from "../client/state.mjs";
 import * as write from "../client/write.mjs";
 
 const sdk = await import(process.env.LATTICE_SDK);
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
-const CHAIN = ["Nexus", "band"];
+const CHAIN = launch.chainPath("band");
 const [listen, rpc, publicRead] = [25011, 29090, 29091];
 const node = `http://127.0.0.1:${publicRead}`;
 const MODULE = here("../policy/target/wasm32-unknown-unknown/release/fanfare_policy.wasm");
@@ -130,31 +132,35 @@ try {
     topology.peers = [];
     topology.mine = { worker: "cpu", workers: 1, batchSize: 100000 };
   });
-  lattice("up");
-  lattice("child", "create", CHAIN.join("/"), "--spec", here("../chain/spec.json"), "--policy-module", MODULE);
+  lattice("child", "create", launch.HOME.join("/"));
+  const specFile = `${root}/band.json`;
+  writeFileSync(specFile, JSON.stringify(launch.spec()));
+  lattice(...launch.createArguments({ name: "band", specFile, moduleFile: MODULE, artist: artist.address }));
   configure((topology) => {
-    topology.mine.recipients = { [CHAIN.join("/")]: miner.address };
+    topology.mine.recipients = { [launch.HOME.join("/")]: miner.address, [CHAIN.join("/")]: miner.address };
   });
+  lattice("up");
   lattice("mine", "start");
 
-  await until("the artist chain is mined", async () => (await balance(miner)) >= 10_000n);
-  console.log("artist chain mined");
+  const premine = launch.premineAmount(launch.spec());
+  await until("the artist chain's genesis is mined", async () => (await balance(artist)) > 0n);
+  assert.equal(await balance(artist), premine);
+  console.log(`artist chain launched; its genesis paid the artist ${premine}`);
   {
     const client = volumes();
     assert.ok(read.runsFanfare(await chainSpec(sdk, client, (await tip(sdk, node, CHAIN, client)).specCID)));
     console.log("the client reads the chain's spec and finds the Fanfare policy");
   }
 
-  await admitted("funding", [miner], {
+  await admitted("funding", [artist], {
     accountActions: [
-      { owner: miner.address, delta: -6001n },
-      { owner: artist.address, delta: 2000n },
+      { owner: artist.address, delta: -4001n },
       { owner: alice.address, delta: 2000n },
       { owner: bob.address, delta: 2000n },
     ],
   });
   await until("fans funded", async () => (await balance(bob)) === 2000n);
-  console.log("artist and fans funded");
+  console.log("the artist funded two fans from the premine");
 
   await admitted("listing and mint", [artist], {
     actions: [

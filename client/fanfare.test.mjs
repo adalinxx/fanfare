@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { context, validate } from "../policy/test/host.mjs";
 import * as door from "./door.mjs";
+import * as launch from "./launch.mjs";
 import * as read from "./read.mjs";
 import * as write from "./write.mjs";
 
@@ -222,4 +223,22 @@ test("ticket values parse as the policy reads them", () => {
   assert.throws(() => write.holding("a", -1n));
   assert.throws(() => write.holding("a", 2n ** 64n));
   assert.throws(() => write.holding("a", 5));
+});
+
+test("the default artist spec is the one in chain/, and pays 21,000,000 at genesis", () => {
+  const file = JSON.parse(readFileSync(new URL("../chain/spec.json", import.meta.url)));
+  assert.deepEqual(launch.spec(), file);
+  assert.ok(read.runsFanfare(launch.spec()));
+  assert.equal(launch.premineAmount(launch.spec()), 21_000_000n);
+  // Across a halving: 10 blocks of 10, then 5 of 5.
+  assert.equal(launch.premineAmount({ premine: 15, initialReward: 10, halvingInterval: 10 }), 125n);
+  assert.equal(launch.premineAmount(launch.spec({ premine: 0 })), 0n);
+  assert.equal(launch.spec({ premine: 5 }).premine, 5);
+});
+
+test("an artist chain is created under the home chain with the premine to the artist", () => {
+  assert.deepEqual(launch.createArguments({ name: "band", specFile: "s.json", moduleFile: "p.wasm", artist: ARTIST }), [
+    "child", "create", "Nexus/fanfare/band", "--spec", "s.json", "--policy-module", "p.wasm", "--premine-to", ARTIST,
+  ]);
+  for (const name of ["", "a/b", undefined]) assert.throws(() => launch.chainPath(name));
 });
