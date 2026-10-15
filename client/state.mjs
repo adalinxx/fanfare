@@ -103,10 +103,11 @@ async function* entries(load, node, volume, path) {
 }
 
 /**
- * The general-state root at a node's current tip: latest block, its post
- * state, then the general-state reference inside it.
+ * A node's current tip: the latest block's hash, the general-state root
+ * inside its post state, and the CID of the chain spec it runs under. Only
+ * the hash is the node's word; the rest is read from the block by CID.
  */
-export async function tipGeneralState(sdk, nodeURL, chainPath, volumes) {
+export async function tip(sdk, nodeURL, chainPath, volumes) {
   const url = new URL("/api/block/latest", nodeURL);
   url.searchParams.set("chainPath", chainPath.join("/"));
   const response = await fetch(url);
@@ -114,5 +115,16 @@ export async function tipGeneralState(sdk, nodeURL, chainPath, volumes) {
   const { hash } = await response.json();
   const block = sdk.decodeCanonicalBlock((await volumes.get(hash)).rootBytes());
   const state = sdk.decodeCanonicalLatticeState((await volumes.get(block.postStateCID)).rootBytes());
-  return state.generalStateCID;
+  return { hash, generalStateCID: state.generalStateCID, specCID: block.specCID };
+}
+
+/** The state at one root as `{ get(key), list(prefix) }`, which the Fanfare reads take. */
+export const view = (load, rootCID) => ({
+  get: (key) => get(load, rootCID, key),
+  list: (prefix) => list(load, rootCID, prefix),
+});
+
+/** The chain spec at `specCID`, as stored: `{ wasmPolicies, premine, … }`. */
+export async function chainSpec(sdk, volumes, specCID) {
+  return sdk.decodeDagCbor((await volumes.get(specCID)).rootBytes());
 }

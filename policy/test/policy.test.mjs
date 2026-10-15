@@ -1,53 +1,20 @@
-// Runs the built policy module the way the Lattice host does: allocate with
-// `lattice_alloc`, write the canonical context, call the entrypoint. Bodies
-// are encoded by the SDK, whose encoding is pinned to Lattice's vectors.
+// Runs the built policy module the way the Lattice host does (host.mjs).
+// Bodies are encoded by the SDK, whose encoding is pinned to Lattice's vectors.
 //
 //   cargo build --release --target wasm32-unknown-unknown
 //   LATTICE_SDK_CORE=<lattice-sdk>/packages/core/dist/index.js node --test test/policy.test.mjs
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
+import { context as hostContext, validate } from "./host.mjs";
 
 const { encodeTransactionBody } = await import(process.env.LATTICE_SDK_CORE);
-const module = new WebAssembly.Module(
-  readFileSync(
-    new URL("../target/wasm32-unknown-unknown/release/fanfare_policy.wasm", import.meta.url),
-  ),
-);
 
 const ALICE = "alice-address";
 const BOB = "bob-address";
 const PATH = ["Nexus", "fanfare", "band"];
 
-function u32(value) {
-  const bytes = new Uint8Array(4);
-  new DataView(bytes.buffer).setUint32(0, value);
-  return bytes;
-}
-
-function u64(value) {
-  const bytes = new Uint8Array(8);
-  new DataView(bytes.buffer).setBigUint64(0, value);
-  return bytes;
-}
-
-function context(bodyBytes, { version = 2, height = 100n } = {}) {
-  const text = new TextEncoder();
-  const parts = [
-    text.encode("LWPCTX"),
-    Uint8Array.of(0, version, 0, 1, 0), // encoding version, ABI version, transaction scope
-    u64(height),
-    new Uint8Array(8), // timestamp
-    u32(3),
-    Uint8Array.of(0xa0, 0xa0, 0xa0), // stand-in chain spec bytes; the policy skips them
-    u32(PATH.length),
-    ...PATH.flatMap((segment) => [u32(text.encode(segment).length), text.encode(segment)]),
-  ];
-  if (bodyBytes === undefined) parts.push(Uint8Array.of(0));
-  else parts.push(Uint8Array.of(1), u32(bodyBytes.length), bodyBytes);
-  parts.push(Uint8Array.of(0, 0)); // no action, no action index
-  return Uint8Array.from(parts.flatMap((part) => [...part]));
-}
+const context = (bodyBytes, options = {}) => hostContext(bodyBytes, { path: PATH, ...options });
 
 // With CONTEXT_DIR set, every context is recorded with its verdict so
 // host-check can replay it through Lattice's own evaluator.
@@ -56,10 +23,7 @@ if (contextDirectory) mkdirSync(contextDirectory, { recursive: true });
 let recorded = 0;
 
 function run(bytes) {
-  const { exports } = new WebAssembly.Instance(module);
-  const pointer = exports.lattice_alloc(bytes.length);
-  new Uint8Array(exports.memory.buffer).set(bytes, pointer);
-  const accepted = exports.lattice_validate_transaction(pointer, bytes.length) === 1;
+  const accepted = validate(bytes);
   if (contextDirectory) {
     const name = `${String(recorded++).padStart(3, "0")}-${accepted ? "accept" : "reject"}.bin`;
     writeFileSync(`${contextDirectory}/${name}`, bytes);

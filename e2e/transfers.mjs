@@ -12,7 +12,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { get, tipGeneralState, volumeLoader } from "../client/state.mjs";
+import * as read from "../client/read.mjs";
+import { chainSpec, tip, view, volumeLoader } from "../client/state.mjs";
+import * as write from "../client/write.mjs";
 
 const sdk = await import(process.env.LATTICE_SDK);
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
@@ -44,20 +46,32 @@ async function until(label, condition, seconds = Number(process.env.E2E_SECONDS 
   }
 }
 
-async function read(path) {
+async function api(path) {
   const url = new URL(path, node);
   url.searchParams.set("chainPath", CHAIN.join("/"));
   const response = await fetch(url);
   return response.ok ? response.json() : undefined;
 }
 
-const balance = async (who) => BigInt((await read(`/api/state/account/${who.address}`))?.balance ?? 0);
-const nonce = async (who) => BigInt((await read(`/api/state/account/${who.address}`))?.nonce ?? 0);
+const balance = async (who) => BigInt((await api(`/api/state/account/${who.address}`))?.balance ?? 0);
+const nonce = async (who) => BigInt((await api(`/api/state/account/${who.address}`))?.nonce ?? 0);
 
-async function value(key) {
-  const volumes = new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${node}/volumes`, { chainPath: CHAIN }));
-  const rootCID = await tipGeneralState(sdk, node, CHAIN, volumes);
-  return get(volumeLoader(volumes, sdk.decodeDagCbor), rootCID, key);
+const volumes = () => new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${node}/volumes`, { chainPath: CHAIN }));
+
+/** The chain's state at the node's tip, read through the client. */
+async function state() {
+  const client = volumes();
+  const { generalStateCID } = await tip(sdk, node, CHAIN, client);
+  return view(volumeLoader(client, sdk.decodeDagCbor), generalStateCID);
+}
+const value = async (key) => (await state()).get(key);
+
+/** `buyer` buys ticket `seat` at the price the client reads, as the app would. */
+async function buy(buyer, seat) {
+  const ticket = await read.ticket(await state(), artist.address, `${SHOW}/${seat}`);
+  const { actions, payments } = write.buy(ticket, buyer.address);
+  const body = write.transaction({ owner: buyer.address, actions, payments, fee: 1n, nonce: await nonce(buyer), chainPath: CHAIN });
+  await admitted(`${buyer === alice ? "Alice" : "Bob"} buys ticket ${seat}`, [buyer], body);
 }
 
 /** Signs `body` by every account in `signers` and submits it. Resolves to `{ ok, status, text }`. */
@@ -125,6 +139,11 @@ try {
 
   await until("the artist chain is mined", async () => (await balance(miner)) >= 10_000n);
   console.log("artist chain mined");
+  {
+    const client = volumes();
+    assert.ok(read.runsFanfare(await chainSpec(sdk, client, (await tip(sdk, node, CHAIN, client)).specCID)));
+    console.log("the client reads the chain's spec and finds the Fanfare policy");
+  }
 
   await admitted("funding", [miner], {
     accountActions: [
@@ -149,10 +168,7 @@ try {
 
   // Primary sale: Alice alone signs and pays the artist.
   const before = await balance(artist);
-  await admitted("Alice buys ticket 3", [alice], {
-    actions: [{ key: ticket(3), oldValue: atPrice(artist, 250), newValue: alice.address }],
-    accountActions: pay(alice, artist, 250n),
-  });
+  await buy(alice, 3);
   await until("Alice's ticket is mined", async () => (await value(ticket(3))) === alice.address);
   assert.equal(await balance(artist), before + 250n);
   console.log("Alice bought ticket 3; the artist was paid 250");
@@ -193,10 +209,7 @@ try {
 
   // The same buyer can buy when they pay, so the refusals above were about the
   // ticket, not about Bob.
-  await admitted("Bob buys ticket 4", [bob], {
-    actions: [{ key: ticket(4), oldValue: atPrice(artist, 250), newValue: bob.address }],
-    accountActions: pay(bob, artist, 250n),
-  });
+  await buy(bob, 4);
   await until("Bob's ticket is mined", async () => (await value(ticket(4))) === bob.address);
   console.log("Bob bought ticket 4 when he paid");
 
@@ -228,13 +241,13 @@ try {
     accountActions: pay(alice, bob, 400n),
   });
   const bobBefore = await balance(bob);
-  await admitted("Alice buys ticket 3 from Bob", [alice], {
-    actions: [{ key: ticket(3), oldValue: atPrice(bob, 400), newValue: alice.address }],
-    accountActions: pay(alice, bob, 400n),
-  });
+  await buy(alice, 3);
   await until("the resale is mined", async () => (await value(ticket(3))) === alice.address);
   assert.equal(await balance(bob), bobBefore + 400n);
   console.log("Bob resold ticket 3 at his own price; Alice bought it alone and Bob got 400");
+  assert.deepEqual((await read.held(await state(), artist.address, alice.address)).map((t) => t.id), [`${SHOW}/3`]);
+  assert.deepEqual((await read.held(await state(), artist.address, bob.address)).map((t) => t.id), [`${SHOW}/4`]);
+  console.log("the client lists each fan's tickets");
 } finally {
   try { lattice("mine", "stop"); } catch {}
   try { lattice("down"); } catch {}

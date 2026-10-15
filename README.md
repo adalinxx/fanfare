@@ -54,7 +54,31 @@ holder changes the price first, the purchase is refused instead of paying a
 different price. The client checks the rest: whether a ticket was checked in
 by the artist or by staff the artist lists.
 
-Build and test:
+## Client
+
+`client/` is the app's library; it runs in a page or in Node.
+
+- `state.mjs` reads state from any node, verifying every trie node by CID,
+  and reads the chain's spec from the tip block.
+- `read.mjs` reads profiles, listings, tickets, a fan's tickets, check-ins
+  and Q&A, and `runsFanfare(spec)` tells the Fanfare policy from a custom one.
+- `write.mjs` builds the writes: listings, minting, buying, pricing,
+  transfers, questions, answers, staff and check-ins. A ticket change names
+  the value the writer read, so a stale view is refused, never misapplied.
+- `door.mjs` is the door check: a one-time challenge the holder's key signs.
+
+The client tests run every transaction they build through the built policy
+before applying it:
+
+```
+LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node --test client/*.test.mjs
+```
+
+The real-node test (`e2e/transfers.mjs`, header has the command) mines an
+artist chain on a private node and buys, resells and transfers tickets
+through the client.
+
+## Policy build and test
 
 ```
 cd policy
