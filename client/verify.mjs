@@ -3,7 +3,7 @@
 // profile and the artist's own site all point at one another:
 //
 //   chain    → artist   the account its genesis paid (state.mjs premineRecipient)
-//   artist   → site     the `url` on the artist's card on Nexus/profile
+//   artist   → site     the `url` on the artist's card on Moniker (Nexus/moniker)
 //   site     → artist   https://<site>/.well-known/lattice lists the address
 //
 // The last link is the one a squatter can't forge. The site serves the file
@@ -34,7 +34,7 @@ export async function linksBack(origin, address, fetchImpl = fetch) {
 }
 
 /**
- * Whether `artist`, with profile `card` (lattice-profile `getProfile`), is
+ * Whether `artist`, with profile `card` (Moniker `getProfile`), is
  * verified: `{ verified: true, site: <host> }`, or `{ verified: false }` with
  * the site it names, if any, so the page can show it unconfirmed.
  */

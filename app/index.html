@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fanfare</title>
+<style>
+/* The fonts ship with the page: no font host learns who visits. */
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 600; font-display: swap; src: url(./fonts/bricolage-grotesque-600.woff2) format("woff2"); }
+@font-face { font-family: "Instrument Sans"; font-weight: 400 600; font-display: swap; src: url(./fonts/instrument-sans.woff2) format("woff2"); }
+:root {
+  --bg: #f4f3f0; --surface: #ffffff; --ink: #17161a; --soft-ink: #3d3b44; --muted: #5a5862; --line: #e2e0da; --line-strong: #cfccc4;
+  --accent: #8a5a12; --accent-deep: #5e3d0b; --accent-soft: #f3e9d6; --good: #2f6b3a; --good-soft: #e3efe4; --bad: #9a3324; --bad-soft: #f6e3df;
+  --display: "Bricolage Grotesque", system-ui, sans-serif; --body: "Instrument Sans", system-ui, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #121114; --surface: #1c1b1f; --ink: #f1efe9; --soft-ink: #d6d3cc; --muted: #a29fa8; --line: #2e2c33; --line-strong: #444149;
+  --accent: #e0b062; --accent-deep: #f0c98a; --accent-soft: #33291a; --good: #8fd09b; --good-soft: #1d2e20; --bad: #f0a194; --bad-soft: #36201c; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); }
+a { color: var(--accent); }
+a:hover { color: var(--accent-deep); }
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h1 { font-size: 32px; line-height: 1.15; }
+h2 { font-size: 22px; }
+h3 { font-size: 18px; }
+h4 { margin: 12px 0 4px; font-size: 14px; color: var(--muted); }
+header.top { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 0; z-index: 2; }
+.brand { font: 600 24px var(--display); text-decoration: none; color: var(--ink); margin-right: auto; }
+header nav { display: flex; gap: 4px; }
+#who { display: flex; gap: 8px; align-items: center; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); cursor: pointer; text-decoration: none; color: var(--ink); font-weight: 500; white-space: nowrap; }
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 600; }
+.btn.primary:hover:not(:disabled) { background: var(--soft-ink); color: var(--bg); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.small { min-height: 32px; padding: 0 12px; font-size: 14px; border-radius: 8px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.chip { white-space: nowrap; padding: 4px 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
+.card header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.section { margin: 32px 0 4px; }
+.hero { padding: 24px 0 8px; }
+.hero h1 { font-size: 40px; }
+.hero p { font-size: 18px; max-width: 46ch; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 12px; }
+.card.artist { display: flex; gap: 12px; align-items: center; text-decoration: none; color: var(--ink); margin: 0; }
+.card.artist:hover { border-color: var(--accent); }
+.card.artist > span { display: flex; flex-direction: column; min-width: 0; }
+.avatar { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-deep); font: 600 20px var(--display); }
+.artist-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: start; }
+.artist-head .avatar { width: 64px; height: 64px; font-size: 28px; }
+.head-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.verified { color: var(--good); font-weight: 600; }
+.unverified { color: var(--muted); }
+.note { background: var(--accent-soft); color: var(--accent-deep); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.note.warn { background: var(--bad-soft); color: var(--bad); }
+.warn-text { color: var(--bad); }
+.coin { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.coin .label { display: block; font-size: 13px; color: var(--muted); }
+.big { font: 600 28px var(--display); font-variant-numeric: tabular-nums; }
+.coin-acts { display: flex; gap: 8px; }
+#market { flex-basis: 100%; }
+.offers { border-collapse: collapse; font-variant-numeric: tabular-nums; margin: 8px 0; }
+.offers th, .offers td { text-align: right; padding: 4px 12px 4px 0; }
+.offers th { font-size: 13px; color: var(--muted); font-weight: 500; }
+.listing.closed { opacity: .7; }
+.seats { list-style: none; margin: 12px 0 0; padding: 0; }
+.seats li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.price { font-variant-numeric: tabular-nums; font-weight: 600; }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); }
+.qa .q, form.q { padding: 10px 0; border-top: 1px solid var(--line); }
+.ask { margin: 0; font-weight: 500; }
+.answer { margin: 4px 0 0; color: var(--soft-ink); padding-left: 12px; border-left: 3px solid var(--accent-soft); }
+.tools .tool-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.addresses { padding-left: 18px; }
+.addresses li { margin: 6px 0; }
+form.inline { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+form.inline label, form.launch label { font-size: 14px; font-weight: 600; }
+input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+textarea { resize: vertical; }
+fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+legend { font-size: 14px; font-weight: 600; padding: 0 4px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > * { flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.kinds { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-strong); cursor: pointer; font-weight: 500; }
+.pill input { position: absolute; opacity: 0; width: 1px; }
+.pill:has(input:checked) { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.pill:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { margin: 0; font-size: 14px; color: var(--muted); }
+.status.good { color: var(--good); }
+.status.bad { color: var(--bad); }
+.held { list-style: none; padding: 0; margin: 8px 0 0; }
+.held li { padding: 10px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.pass { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.pass svg { width: min(320px, 100%); height: auto; background: #fff; border-radius: 12px; }
+.door video { width: 100%; max-width: 420px; border-radius: 12px; background: #000; display: block; margin-bottom: 12px; }
+.verdict { margin-top: 16px; padding: 16px; border-radius: 12px; }
+.verdict strong { font: 600 28px var(--display); display: block; }
+.verdict p { margin: 4px 0 12px; }
+.verdict.good { background: var(--good-soft); color: var(--good); }
+.verdict.bad { background: var(--bad-soft); color: var(--bad); }
+.defaults { background: var(--bg); border-radius: 10px; padding: 12px 14px; }
+form.launch { display: flex; flex-direction: column; gap: 10px; max-width: 560px; }
+pre { white-space: pre-wrap; background: var(--bg); padding: 12px; border-radius: 10px; }
+.empty { text-align: center; padding: 48px 0; }
+.back { display: inline-block; margin-bottom: 12px; color: var(--muted); text-decoration: none; }
+#alert { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; max-width: calc(100% - 32px); }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); width: min(480px, calc(100% - 32px)); padding: 20px; }
+dialog::backdrop { background: rgb(0 0 0 / .35); }
+dialog form { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 600px) {
+  header nav .wide { display: none; }
+  .hero h1 { font-size: 32px; }
+  .artist-head { grid-template-columns: auto minmax(0, 1fr); }
+  .head-acts { grid-column: 1 / -1; justify-content: flex-start; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/">fanfare</a>
+  <nav aria-label="Main"><a class="btn ghost small wide" href="#/launch">Launch your coin</a></nav>
+  <div id="who"></div>
+  <button class="btn ghost small" type="button" data-act="settings" aria-label="Settings" title="Settings">⚙︎</button>
+</header>
+<main><p class="muted">Loading…</p></main>
+<p id="alert" role="status" hidden></p>
+<dialog id="settings" aria-labelledby="settings-title">
+  <form data-act="settings">
+    <h2 id="settings-title">Settings</h2>
+    <label for="s-node">Node</label><input id="s-node" name="node" class="mono" placeholder="https://your-node.example" required>
+    <p class="small muted">Fanfare reads every record from this node and checks it by its hash, so the node can withhold but not forge. Your wallet sends writes through its own node.</p>
+    <label for="s-home">Home chain</label><input id="s-home" name="home" class="mono">
+    <label for="s-profile">Profile chain (Moniker)</label><input id="s-profile" name="profile" class="mono">
+    <div class="acts"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Cancel</button></div>
+  </form>
+</dialog>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

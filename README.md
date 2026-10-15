@@ -32,7 +32,7 @@ are the items, and the holder of one leaves a shipping address sealed to the
 artist.
 
 Profiles are not on artist chains: an artist's name, picture and site are
-their card on the shared profile chain, `Nexus/profile` (`lattice-profile`),
+their card on the shared profile chain, `Nexus/moniker` (Moniker, `~/src/moniker`),
 keyed by address like every app's. Fanfare adds one field there,
 `app.fanfare.x25519`, the key fans seal shipping addresses to.
 
@@ -137,6 +137,14 @@ The real-node tests (each file's header has the command):
   resells it, a late buyer is told why theirs failed, a paid question is
   answered, a shirt ships to an address only the artist opens, and the
   holder is checked in at the door.
+
+## Web app
+
+`app/` is Fanfare in the browser: a static page over `client/` that reads
+every record by CID from a node and has the Lattice wallet sign. See
+`app/README.md`. It needs a browser with Ed25519 and X25519 in WebCrypto
+(Chrome 137+, Firefox 130+, Safari 17+). The UI tests in `e2e/ui/` drive it
+in headless Chromium against a private node.
 
 ## Policy build and test
 

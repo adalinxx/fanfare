@@ -5,9 +5,9 @@
 // wallet: the wallet signs a fixed text (`signMessage`), and Ed25519
 // signatures are deterministic, so the same account on the same site always
 // gets the same key back, and nobody without the account can. The public half
-// sits on the artist's profile (Nexus/profile) as `app.fanfare.x25519`, an
-// app field: another app may derive its own key the same way, and neither
-// overwrites the other's.
+// sits on the artist's profile on Moniker (Nexus/moniker) as
+// `app.fanfare.x25519`, an app field: another app may derive its own key the
+// same way, and neither overwrites the other's.
 //
 // Box: an ephemeral X25519 key agrees a secret with the artist's key, HKDF
 // stretches it into an AES-GCM key, and the record is JSON
