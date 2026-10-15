@@ -4,16 +4,21 @@
 // artist funds two fans from it, lists a show and mints its tickets at a
 // price; a fan buys one, transfers it, and every way of taking a ticket
 // without paying for it or holding it is refused. Last, a fan resells a
-// ticket at their own price to a buyer who completes it alone.
+// ticket at their own price to a buyer who completes it alone. Then the
+// coin market: the artist offers coin for Fanfare coin, the client lists the
+// offer and writes the wallet's order request, and a fan holding Fanfare
+// coin buys it (the receipt and withdrawal the wallet would sign, sent here
+// with `lattice tx`).
 //
 //   LATTICE=<lattice-node with --premine-to>/.build/debug/lattice \
 //   LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node e2e/transfers.mjs
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as launch from "../client/launch.mjs";
+import * as market from "../client/market.mjs";
 import * as read from "../client/read.mjs";
 import { chainSpec, tip, view, volumeLoader } from "../client/state.mjs";
 import * as write from "../client/write.mjs";
@@ -48,14 +53,14 @@ async function until(label, condition, seconds = Number(process.env.E2E_SECONDS 
   }
 }
 
-async function api(path) {
+async function api(path, chain = CHAIN) {
   const url = new URL(path, node);
-  url.searchParams.set("chainPath", CHAIN.join("/"));
+  url.searchParams.set("chainPath", chain.join("/"));
   const response = await fetch(url);
   return response.ok ? response.json() : undefined;
 }
 
-const balance = async (who) => BigInt((await api(`/api/state/account/${who.address}`))?.balance ?? 0);
+const balance = async (who, chain = CHAIN) => BigInt((await api(`/api/state/account/${who.address}`, chain))?.balance ?? 0);
 const nonce = async (who) => BigInt((await api(`/api/state/account/${who.address}`))?.nonce ?? 0);
 
 const volumes = () => new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${node}/volumes`, { chainPath: CHAIN }));
@@ -123,6 +128,16 @@ const SHOW = "berlin-night-1";
 const ticket = (seat) => `own/${artist.address}/${SHOW}/${seat}`;
 const listing = `item/${artist.address}/${SHOW}`;
 const atPrice = (who, price) => `${who.address}@${price}`;
+
+/** A `lattice key generate` key file for `who`, for `lattice tx`. */
+function keyFile(who) {
+  const file = `${root}/${who.address}.key`;
+  writeFileSync(file, JSON.stringify({ address: who.address, privateKey: Buffer.from(who.privateKey).toString("hex"), publicKey: who.publicKey }));
+  chmodSync(file, 0o600);
+  return file;
+}
+const tx = (leg, chain, who, ...args) =>
+  lattice("tx", leg, "--chain", chain.join("/"), "--key", keyFile(who), "--fee", "1", ...args);
 
 try {
   lattice("init");
@@ -254,6 +269,31 @@ try {
   assert.deepEqual((await read.held(await state(), artist.address, alice.address)).map((t) => t.id), [`${SHOW}/3`]);
   assert.deepEqual((await read.held(await state(), artist.address, bob.address)).map((t) => t.id), [`${SHOW}/4`]);
   console.log("the client lists each fan's tickets");
+
+  // Coin market. Alice gets Fanfare coin from the miner, who mined it.
+  const [coin, asked, swap] = [5000n, 300n, ["--swap-nonce", "1", "--demand", "300"]];
+  await until("the miner holds Fanfare coin", async () => (await balance(miner, launch.HOME)) > 1000n);
+  tx("send", launch.HOME, miner, "--to", alice.address, "--amount", "1000");
+  await until("Alice holds Fanfare coin", async () => (await balance(alice, launch.HOME)) === 1000n);
+  tx("deposit", CHAIN, artist, ...swap, "--lock", String(coin));
+  const [offer] = await until("the offer is listed", async () => {
+    const found = await market.offers(node, CHAIN);
+    return found.length > 0 && found;
+  });
+  assert.deepEqual(offer, { seller: artist.address, coin, price: asked, depositNonce: 1n });
+  console.log(`the artist offered ${coin} band for ${asked} Fanfare coin; the client lists it`);
+
+  const request = new URL(market.buyRequest(CHAIN, market.pick([offer], 1000n).offers));
+  const intent = JSON.parse(Buffer.from(request.searchParams.get("intent"), "base64url").toString());
+  assert.deepEqual(intent.deposits, [{ demander: artist.address, amountDemanded: "300", amountDeposited: "5000", depositNonce: "1" }]);
+  // What the wallet does with that request: pay on the parent, claim on the child.
+  const [artistHome, aliceBand] = [await balance(artist, launch.HOME), await balance(alice)];
+  tx("receipt", launch.HOME, alice, ...swap, "--demander", artist.address, "--directory", CHAIN.at(-1));
+  await until("the artist is paid on the home chain", async () => (await balance(artist, launch.HOME)) === artistHome + asked);
+  tx("withdraw", CHAIN, alice, ...swap, "--demander", artist.address, "--amount", String(coin));
+  await until("Alice holds the coin", async () => (await balance(alice)) === aliceBand + coin - 1n);
+  await until("the offer is gone", async () => (await market.offers(node, CHAIN)).length === 0);
+  console.log(`Alice paid ${asked} Fanfare coin and claimed ${coin} band; the offer is gone`);
 } finally {
   try { lattice("mine", "stop"); } catch {}
   try { lattice("down"); } catch {}
