@@ -123,9 +123,18 @@ before applying it:
 LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node --test client/*.test.mjs
 ```
 
-The real-node test (`e2e/transfers.mjs`, header has the command) mines an
-artist chain on a private node and buys, resells and transfers tickets
-through the client.
+The real-node tests (each file's header has the command):
+
+- `e2e/transfers.mjs` mines an artist chain on a private node, buys,
+  resells and transfers tickets through the client, sends every way of
+  taking a ticket without paying for it or holding it (all refused), and
+  trades the artist's coin on the market.
+- `e2e/journey.mjs` runs the whole journey on two nodes. The artist's node
+  launches the chain; a fan's node joins it while running, and every fan
+  write goes through it. A fan buys the coin on the market, buys a ticket and
+  resells it, a late buyer is told why theirs failed, a paid question is
+  answered, a shirt ships to an address only the artist opens, and the
+  holder is checked in at the door.
 
 ## Policy build and test
 
