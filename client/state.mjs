@@ -110,7 +110,9 @@ async function* entries(load, node, volume, path) {
 export async function tip(sdk, nodeURL, chainPath, volumes) {
   const url = new URL("/api/block/latest", nodeURL);
   url.searchParams.set("chainPath", chainPath.join("/"));
-  const response = await fetch(url);
+  // The node lets the latest block be cached for a few seconds; a writer
+  // needs the tip as it is now.
+  const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`latest block: HTTP ${response.status}`);
   const { hash } = await response.json();
   const block = sdk.decodeCanonicalBlock((await volumes.get(hash)).rootBytes());
@@ -127,4 +129,33 @@ export const view = (load, rootCID) => ({
 /** The chain spec at `specCID`, as stored: `{ wasmPolicies, premine, … }`. */
 export async function chainSpec(sdk, volumes, specCID) {
   return sdk.decodeDagCbor((await volumes.get(specCID)).rootBytes());
+}
+
+/**
+ * Whom the chain's genesis paid: the account its premine credited, or
+ * undefined when the genesis paid no one. On an artist chain that is the
+ * artist. The genesis hash is the node's word, as the tip's is; the block and
+ * its transactions are read by CID.
+ */
+export async function premineRecipient(sdk, nodeURL, chainPath, volumes) {
+  const url = new URL("/api/block/0", nodeURL);
+  url.searchParams.set("chainPath", chainPath.join("/"));
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`genesis block: HTTP ${response.status}`);
+  const { hash } = await response.json();
+  const blockVolume = await volumes.get(hash);
+  const block = sdk.decodeCanonicalBlock(blockVolume.rootBytes());
+  if (block.height !== 0n || block.parentCID !== undefined) throw new Error("not a genesis block");
+  const load = volumeLoader(volumes, sdk.decodeDagCbor);
+  // The genesis's transactions travel inside its block's Volume.
+  const within = (cid, volume) => load(cid, volume ?? blockVolume);
+  const credited = new Set();
+  for await (const [, signed] of list(within, block.transactionsCID)) {
+    const transaction = await within(signed.rawCID);
+    const { node: body } = await within(transaction.node.body.rawCID, transaction.volume);
+    // The premine is the one transaction nobody signs.
+    if (transaction.node.signatures.length > 0 || body.signers.length > 0) continue;
+    for (const { owner, delta } of body.accountActions) if (BigInt(delta) > 0n) credited.add(owner);
+  }
+  return credited.size === 1 ? [...credited][0] : undefined;
 }

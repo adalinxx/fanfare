@@ -11,7 +11,6 @@ client is the app.
 ## Records
 
 ```
-user/<artist>/profile                       name, bio, avatar CID, encryption key
 item/<artist>/<name>                        listing: {kind, title, venue, date, media, closed?}
 user/<artist>/answer/<id>        the artist's answer to a question
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
@@ -28,7 +27,23 @@ Each ticket is its own token, named by the artist, for example
 The artist mints tickets, usually at a price (`<artist>@250`); a fan buys one
 by paying that price, and can transfer it or sell it again at any price,
 forever. Prices are plain decimals with no leading zeros. A Q&A session is a
-listing whose tickets are question slots.
+listing whose tickets are question slots; merch is a listing whose tickets
+are the items, and the holder of one leaves a shipping address sealed to the
+artist.
+
+Profiles are not on artist chains: an artist's name, picture and site are
+their card on the shared profile chain, `Nexus/profile` (`lattice-profile`),
+keyed by address like every app's. Fanfare adds one field there,
+`app.fanfare.x25519`, the key fans seal shipping addresses to.
+
+## Who an artist is
+
+The artist of a chain is the account its genesis paid the premine to: only
+whoever created the chain could choose it. Names are first come, so the client
+shows an artist as verified only when the chain, the profile and the artist's
+own site point at one another: the card's `url` is an https site, and
+`https://<site>/.well-known/lattice` lists the artist's address (plain text,
+one address per line, served with `Access-Control-Allow-Origin: *`).
 
 ## Policy
 
@@ -76,9 +91,11 @@ pays the premine to `--premine-to`. Names are first come.
 `client/` is the app's library; it runs in a page or in Node.
 
 - `state.mjs` reads state from any node, verifying every trie node by CID,
-  and reads the chain's spec from the tip block.
-- `read.mjs` reads profiles, listings, tickets, a fan's tickets, check-ins
-  and Q&A, and `runsFanfare(spec)` tells the Fanfare policy from a custom one.
+  reads the chain's spec from the tip block, and finds the artist in the
+  genesis block (`premineRecipient`).
+- `read.mjs` reads listings, tickets, a fan's tickets, check-ins, Q&A and
+  shipping records, and `runsFanfare(spec)` tells the Fanfare policy from a
+  custom one.
 - `write.mjs` builds the writes: listings, minting, buying, pricing,
   transfers, questions, answers, staff and check-ins. A ticket change names
   the value the writer read, so a stale view is refused, never misapplied.
@@ -88,6 +105,14 @@ pays the premine to `--premine-to`. Names are first come.
   shows, signs and sends every write, payments included.
 - `market.mjs` lists the offers for an artist's coin and writes the wallet's
   `lattice://order` requests to sell or take them.
+- `refusal.mjs` says why a write didn't land: it re-reads the keys the
+  write named and reports, per key, what stands in the way (sold to someone
+  else, price changed, not yours to change, not enough coin, ...). The node
+  answers every refusal with the same `invalidState`.
+- `verify.mjs` is the name check above.
+- `ship.mjs` seals a shipping address to the artist. The artist's key comes
+  from their wallet signing a fixed text, so Fanfare stores no key and the
+  same account always gets the same key back.
 - `door.mjs` is the door check: a one-time challenge the holder's wallet
   signs (`signMessage`), bound to Fanfare's origin.
 

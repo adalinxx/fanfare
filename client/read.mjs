@@ -8,7 +8,7 @@
 // launch with a different policy; the client then labels the chain custom.
 
 /** The CID of the Fanfare policy module built from `policy/`. */
-export const FANFARE_POLICY = "bafyreiac3zzyofdmltgzz55ydhshlcbp7yc7rsnjp64x5l6tt52wffbzze";
+export const FANFARE_POLICY = "bafyreicpgzwln3czmak34v7na4loiy6czqrlztnsud3e547qrpcpgppt7y";
 
 /**
  * Whether a chain spec (see state.mjs `chainSpec`) runs the Fanfare policy.
@@ -85,12 +85,6 @@ export async function held(state, artist, fan) {
   return (await ticketsUnder(state, artist, "")).filter((ticket) => ticket.holder === fan);
 }
 
-/** `artist`'s profile, or undefined. */
-export async function profile(state, artist) {
-  const value = parse(await state.get(`user/${artist}/profile`));
-  return isObject(value) ? value : undefined;
-}
-
 const asListing = (artist, name, value) => {
   const record = parse(value);
   if (!isObject(record) || typeof record.title !== "string") return undefined;
@@ -154,4 +148,20 @@ export async function questions(state, artist, name) {
     }),
   );
   return asked.filter(Boolean);
+}
+
+/**
+ * The shipping records for merch listing `name`: for each item whose holder
+ * left one, `{ ticket, sealed }`, opened by the artist with ship.mjs `open`.
+ * Like a question, a record counts only from the item's current holder.
+ */
+export async function shipments(state, artist, name) {
+  const items = await tickets(state, artist, name);
+  const found = await Promise.all(
+    items.map(async (item) => {
+      const sealed = await state.get(`user/${item.holder}/ship/${artist}/${item.id}`);
+      return sealed === undefined ? undefined : { ticket: item, sealed };
+    }),
+  );
+  return found.filter(Boolean);
 }

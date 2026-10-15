@@ -60,9 +60,6 @@ export function holding(holder, price) {
 
 // Artist.
 
-/** The artist's profile `{ name, bio?, avatar? }`; `avatar` is a media CID. */
-export const profile = (artist, value) => [[`user/${artist}/profile`, json(value)]];
-
 /**
  * A listing `{ kind, title, venue?, date?, media?, closed? }`. It can be
  * edited and closed, never deleted.
@@ -88,6 +85,12 @@ export const answer = (artist, id, text) => [[`user/${artist}/answer/${id}`, tex
 
 /** The question `fan` asks on the Q&A slot `id` they hold. */
 export const question = (fan, artist, id, text) => [[`user/${fan}/question/${artist}/${id}`, text]];
+
+/**
+ * Where `fan` ships merch ticket `id` to: `sealed`, from ship.mjs `seal`, so
+ * only the artist reads it.
+ */
+export const ship = (fan, artist, id, sealed) => [[`user/${fan}/ship/${artist}/${id}`, sealed]];
 
 // Door.
 
