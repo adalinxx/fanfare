@@ -256,7 +256,7 @@ test("the fan's tickets: a pass for the door, and a resale price", async () => {
 
 test("the door: pick the show, a good pass is checked in, and it works once", async () => {
   await visit(artistPage, "#/door/band");
-  await artistPage.click("a.card", { hasText: "Berlin" });
+  await artistPage.locator("a.card", { hasText: "Berlin" }).click();
   await artistPage.locator("h1", { hasText: "Door · Berlin" }).waitFor();
   await artistPage.fill("#code", code);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');

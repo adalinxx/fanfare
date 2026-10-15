@@ -85,7 +85,11 @@ export async function held(state, artist, fan) {
   return (await ticketsUnder(state, artist, "")).filter((ticket) => ticket.holder === fan);
 }
 
+// A listing's name is one path segment. Its tickets are `<name>` and
+// `<name>/…`, so a name with a "/" in it would sit inside another listing's
+// tickets; such a listing isn't one Fanfare shows.
 const asListing = (artist, name, value) => {
+  if (name === "" || name.includes("/")) return undefined;
   const record = parse(value);
   if (!isObject(record) || typeof record.title !== "string") return undefined;
   const text = (field) => (typeof record[field] === "string" ? { [field]: record[field] } : {});

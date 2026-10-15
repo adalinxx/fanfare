@@ -221,6 +221,10 @@ test("the door: the holder's pass gets them in once, and only trusted staff chec
   assert.equal(await verdict(await passOf(fan), NOW, await read.listing(c.state, ARTIST, "paris")), "other-show");
   assert.equal(await verdict(await passOf(fan), NOW, { ...berlin, kind: "qa" }), "other-show");
   assert.ok(door.inListing("berlin", "berlin") && door.inListing("berlin", "berlin/A1") && !door.inListing("berlin", "berlin-2/A1"));
+  // A listing named inside another's tickets isn't a listing Fanfare shows, so no door is opened for it.
+  assert.ok(await c.write(ARTIST, write.listing(ARTIST, "berlin/shirts", { kind: "merch", title: "Shirts" })));
+  assert.equal(await read.listing(c.state, ARTIST, "berlin/shirts"), undefined);
+  assert.ok(!(await read.listings(c.state, ARTIST)).some((l) => l.name.includes("/")));
   assert.equal(await verdict(await passOf(fan, { id: "berlin/A1" })), "no-ticket", "a pass for another ticket");
   // A pass whose time was edited no longer verifies.
   const edited = { ...(await passOf(fan)), time: String(NOW / 1000 + 30) };

@@ -61,8 +61,8 @@ export function holding(holder, price) {
 // Artist.
 
 /**
- * A listing `{ kind, title, venue?, date?, media?, closed? }`. It can be
- * edited and closed, never deleted.
+ * A listing `{ kind, title, venue?, date?, media?, closed? }` named by one
+ * path segment. It can be edited and closed, never deleted.
  */
 export const listing = (artist, name, value) => [[`item/${artist}/${name}`, json(value)]];
 

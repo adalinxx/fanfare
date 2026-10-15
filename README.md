@@ -24,6 +24,8 @@ user/<fan>/ship/<artist>/<id>       shipping address, encrypted to the artist
 
 Each ticket is its own token, named by the artist, for example
 `berlin-night-1/A12`; a show's tickets share its listing's name as a prefix.
+A listing's name is one path segment, so one listing's tickets never sit
+inside another's; the client ignores a listing named with a "/".
 The artist mints tickets, usually at a price (`<artist>@250`); a fan buys one
 by paying that price, and can transfer it or sell it again at any price,
 forever. Prices are plain decimals with no leading zeros. A Q&A session is a

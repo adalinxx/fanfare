@@ -130,15 +130,22 @@ async function connect() {
  * reports progress. Resolves true once it landed.
  */
 async function perform(chain, w, say) {
+  // What the chain says about `w` now, or [] (nothing known yet) when the node can't answer.
+  const ask = async (options) => {
+    try {
+      return await explain(await stateOf(chain), w, me, options);
+    } catch {
+      return [];
+    }
+  };
   try {
     if (!me) await connect();
     say("Approve it in your wallet…");
     await wallet.send(lattice(), chain, w);
   } catch (error) {
     if (error instanceof Said) return say(error.message, "bad"), false;
-    const why = /refused/i.test(error?.message ?? "")
-      ? (await explain(await stateOf(chain), w, me, { balance: await balanceOf(me, chain) }).catch(() => [])).filter((x) => x.reason !== "done")
-      : [];
+    const balance = await balanceOf(me, chain).catch(() => undefined);
+    const why = /refused/i.test(error?.message ?? "") ? (await ask({ balance })).filter((x) => x.reason !== "done") : [];
     say(why.length > 0 ? why.map((x) => x.text).join(" ") : walletMessage(error), "bad");
     return false;
   }
@@ -146,13 +153,23 @@ async function perform(chain, w, say) {
   const deadline = Date.now() + 5 * 60_000;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    const why = await explain(await stateOf(chain), w, me).catch(() => []);
+    const why = await ask();
     if (landed(w, why)) return say("Done.", "good"), true;
     const against = why.filter((x) => x.reason !== "done");
     if (against.length > 0) return say(against.map((x) => x.text).join(" "), "bad"), false;
   }
   say("Sent, not in a block yet. It may still land.", "wait");
   return false;
+}
+
+/** Runs `send` with `form`'s controls disabled, and enables them again however it ends. */
+async function submitting(form, send) {
+  setBusy(form, true);
+  try {
+    if (await send()) setTimeout(rerender, 800);
+  } finally {
+    setBusy(form, false);
+  }
 }
 
 // Drawing.
@@ -390,9 +407,7 @@ async function confirmBuy(form) {
     w.actions.push(...(await write.changes(p.state, write.ship(me, p.artist, seen.id, await ship.seal(key, address)))));
   }
   if (!still(p)) return;
-  setBusy(form, true);
-  if (await perform(p.chain, w, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  await submitting(form, () => perform(p.chain, w, say));
 }
 
 const setBusy = (form, busy) => form.querySelectorAll("button, input, textarea, select").forEach((el) => (el.disabled = busy));
@@ -425,21 +440,22 @@ async function createListing(form) {
   const record = { kind: data.kind, title, ...(data.venue.trim() && { venue: data.venue.trim() }), ...(data.date && { date: data.date }) };
   const ids = newIds(name, [], count);
   const writes = [...write.listing(p.artist, name, record), ...ids.flatMap((id) => write.mint(p.artist, id, { price }))];
-  setBusy(form, true);
-  if (await perform(p.chain, { actions: await write.changes(p.state, writes) }, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  await submitting(form, async () => perform(p.chain, { actions: await write.changes(p.state, writes) }, say));
 }
 
 async function answer(form) {
   const p = page;
   const say = sayer($(".status", form));
   const text = new FormData(form).get("answer").trim();
-  const asked = p.listings.flatMap((l) => l.questions ?? []).find((q) => q.ticket.id === form.dataset.ticket);
-  if (!text || !asked) return;
-  setBusy(form, true);
-  const w = { actions: await write.changes(p.state, write.answer(p.artist, asked.ticket.id, asked.text, text)) };
-  if (await perform(p.chain, w, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  const listing = p.listings.find((l) => (l.questions ?? []).some((q) => q.ticket.id === form.dataset.ticket));
+  if (!text || !listing) return;
+  await submitting(form, async () => {
+    // The question as it stands now: the holder may have edited it since the page read it.
+    const state = await stateOf(p.chain);
+    const asked = (await read.questions(state, p.artist, listing.name)).find((q) => q.ticket.id === form.dataset.ticket);
+    if (!asked) return say("The question is gone; look again.", "bad"), false;
+    return perform(p.chain, { actions: await write.changes(state, write.answer(p.artist, asked.ticket.id, asked.text, text)) }, say);
+  });
 }
 
 function staffForm() {
@@ -451,9 +467,7 @@ async function saveStaff(form) {
   const say = sayer($(".status", form));
   const address = new FormData(form).get("staff").trim();
   if (!profiles.isAddress(address)) return say("That isn't a Lattice address.", "bad");
-  setBusy(form, true);
-  if (await perform(p.chain, { actions: await write.changes(p.state, write.staff(p.artist, address)) }, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  await submitting(form, async () => perform(p.chain, { actions: await write.changes(p.state, write.staff(p.artist, address)) }, say));
 }
 
 async function openShipping() {
@@ -492,8 +506,11 @@ async function publishKey(button) {
   const state = await (profileState ??= stateOf(PROFILE()));
   const w = await profiles.setField(state, p.artist, ship.KEY_FIELD, button.dataset.key);
   button.disabled = true;
-  if (await perform(PROFILE(), w, say)) profileState = undefined;
-  button.disabled = false;
+  try {
+    if (await perform(PROFILE(), w, say)) profileState = undefined;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // The coin market.
@@ -616,9 +633,7 @@ async function resell(form) {
   const text = new FormData(form).get("price").trim();
   const price = text === "" ? undefined : amountIn(text);
   if (text !== "" && price === undefined) return say("A whole number above zero, or empty.", "bad");
-  setBusy(form, true);
-  if (await perform(entry.info.chain, { actions: [write.price(ticket, price)] }, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  await submitting(form, () => perform(entry.info.chain, { actions: [write.price(ticket, price)] }, say));
 }
 
 function giveForm(button) {
@@ -631,9 +646,7 @@ async function give(form) {
   const say = sayer($(".status", form));
   const to = new FormData(form).get("to").trim();
   if (!profiles.isAddress(to)) return say("That isn't a Lattice address.", "bad");
-  setBusy(form, true);
-  if (await perform(entry.info.chain, { actions: [write.transfer(ticket, to)] }, say)) setTimeout(rerender, 800);
-  setBusy(form, false);
+  await submitting(form, () => perform(entry.info.chain, { actions: [write.transfer(ticket, to)] }, say));
 }
 
 // The door: staff pick the show, then scan. A good pass is checked in at
@@ -646,9 +659,19 @@ function stopScan() {
 }
 
 /** The Fanfare sites whose passes this door accepts: this one and any in Settings. */
-const acceptedOrigins = () => [ORIGIN, ...settings.origins.split(/[\s,]+/).filter(Boolean)];
+const acceptedOrigins = () => [
+  ORIGIN,
+  ...settings.origins.split(/[\s,]+/).filter(Boolean).flatMap((text) => {
+    try {
+      return [new URL(text).origin];
+    } catch {
+      return [];
+    }
+  }),
+];
 
-let doorAt; // { info, listing, seen: Set of ticket ids this door let in, busy }
+// { info, listing, seen: ids this door let in, sent: ids it sent a check-in for, busy }
+let doorAt;
 
 async function showDoor(route, id) {
   let info;
@@ -668,7 +691,7 @@ async function showDoor(route, id) {
     return;
   }
   const same = doorAt?.info.name === info.name && doorAt.listing.name === listing.name;
-  doorAt = { info, listing, seen: same ? doorAt.seen : new Set(), busy: false };
+  doorAt = { info, listing, seen: same ? doorAt.seen : new Set(), sent: same ? doorAt.sent : new Set(), busy: false };
   main().innerHTML = `<a class="back" href="#/door/${encodeURIComponent(route.name)}">← Shows</a><h1>Door · ${esc(listing.title)}</h1>
     <p class="muted">${[listing.venue, listing.date].filter(Boolean).map(esc).join(" · ")}${me ? "" : " · Connect the wallet you check people in with."}</p>
     <div class="door card"><video id="camera" playsinline muted hidden></video>
@@ -698,7 +721,8 @@ async function startCamera(button) {
       const [code] = doorAt.busy ? [] : await detector.detect(video).catch(() => []);
       if (code && code.rawValue !== last) {
         last = code.rawValue;
-        await checkPass(code.rawValue);
+        // One pass going wrong doesn't stop the camera.
+        await checkPass(code.rawValue).catch((error) => alertLine(error.message));
       }
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
@@ -707,15 +731,18 @@ async function startCamera(button) {
   }
 }
 
-function showVerdict(kind, head, text) {
+/** Shows a verdict at the door that is still `at`; returns its status line, or a no-op. */
+function showVerdict(kind, head, text, at = doorAt) {
   const box = $("#verdict");
-  if (box) box.innerHTML = `<div class="verdict ${kind}"><strong>${esc(head)}</strong><p>${esc(text)}</p><p class="status" hidden></p></div>`;
-  return box;
+  if (!box || at !== doorAt) return () => {};
+  box.innerHTML = `<div class="verdict ${kind}"><strong>${esc(head)}</strong><p>${esc(text)}</p><p class="status" hidden></p></div>`;
+  return sayer($(".status", box));
 }
 
 async function checkPass(code) {
   const at = doorAt;
-  if (!at || at.busy) return;
+  if (!at) return;
+  if (at.busy) return alertLine("Still recording the last check-in…");
   const scanned = door.readPass(String(code).trim());
   if (!scanned) return showVerdict("bad", "Stop", "That isn't a Fanfare pass.");
   if (scanned.artist !== at.info.artist) return showVerdict("bad", "Stop", "This pass is for another artist's ticket.");
@@ -726,19 +753,24 @@ async function checkPass(code) {
     const ticket = await read.ticket(state, at.info.artist, scanned.id);
     const checkins = ticket ? await read.checkins(state, at.info.artist, ticket.id) : [];
     const v = await door.check(sdk, acceptedOrigins(), scanned, at.listing, ticket, checkins);
-    if (!v.ok) return showVerdict("bad", "Stop", v.text);
+    const label = ticket && `${seatOf(at.listing.name, ticket.id)}, held by ${short(ticket.holder)}`;
+    // A check-in this door sent that landed after it stopped waiting: the fan is in.
+    if (v.reason === "used" && at.sent.has(ticket.id) && checkins.includes(me)) {
+      at.seen.add(ticket.id);
+      return showVerdict("good", "Let them in", `${at.listing.title} · ${label}. This door checked them in.`, at);
+    }
+    if (!v.ok) return showVerdict("bad", "Stop", v.text, at);
     if (!me) await connect().catch(() => {});
-    if (!me) return showVerdict("bad", "Wait", "Connect the wallet you check people in with.");
+    if (!me) return showVerdict("bad", "Wait", "Connect the wallet you check people in with.", at);
     if (me !== at.info.artist && !(await read.staff(state, at.info.artist)).includes(me))
-      return showVerdict("bad", "Wait", "This wallet isn't on the artist's door staff, so its check-in wouldn't count.");
-    const label = `${seatOf(at.listing.name, ticket.id)}, held by ${short(ticket.holder)}`;
-    const box = showVerdict("wait", "Checking in…", `${at.listing.title} · ${label}. The pass is good; recording the check-in.`);
-    const say = sayer($(".status", box));
+      return showVerdict("bad", "Wait", "This wallet isn't on the artist's door staff, so its check-in wouldn't count.", at);
+    const say = showVerdict("wait", "Checking in…", `${at.listing.title} · ${label}. The pass is good; recording the check-in.`, at);
     // The ticket id is fixed here: a scan meanwhile can't change what is checked in.
     const w = { actions: await write.changes(state, write.checkin(me, at.info.artist, ticket.id)) };
-    if (await perform(at.info.chain, w, say)) {
+    at.sent.add(ticket.id);
+    if (await perform(at.info.chain, w, (text, kind) => doorAt === at && say(text, kind))) {
       at.seen.add(ticket.id);
-      if (doorAt === at) showVerdict("good", "Let them in", `${at.listing.title} · ${label}. Checked in.`);
+      showVerdict("good", "Let them in", `${at.listing.title} · ${label}. Checked in.`, at);
     }
   } finally {
     at.busy = false;
