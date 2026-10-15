@@ -19,11 +19,11 @@ const describe = (value) => {
 function tokenMoved(oldValue, now, me) {
   const [was, is] = [holding(oldValue), holding(now)];
   if (!is) return { reason: "gone", text: "This ticket no longer exists." };
-  if (is.holder === me) return { reason: "yours", text: "This ticket is already yours." };
+  if (is.holder === me && was?.holder !== me) return { reason: "yours", text: "This ticket is already yours." };
   if (!was) return { reason: "minted", text: `This ticket was just minted; it is ${describe(now)}.` };
   if (was.holder !== is.holder)
     return was.price !== undefined
-      ? { reason: "sold", text: "Someone else bought this ticket first." }
+      ? { reason: "sold", text: "Someone else got this ticket first." }
       : { reason: "moved", text: `This ticket changed hands; it is ${describe(now)}.` };
   if (is.price === undefined) return { reason: "off-sale", text: "The holder took this ticket off sale." };
   return { reason: "price", text: `The price changed to ${is.price}.` };
@@ -49,7 +49,7 @@ function tokenRule(artist, { oldValue, newValue }, me, paid) {
  * `{ key, reason, text }`, one per action that stands in the way. With
  * `balance`, `me`'s coin now, a write that costs more says so. An empty list
  * means every key still reads as the write expects: the write may yet land.
- * A list of only `done` means it did.
+ * The write landed only when every action reads `done` (`landed`).
  */
 export async function explain(state, { actions, payments = [] }, me, { balance, fee = 1n } = {}) {
   const paid = new Map();
@@ -78,3 +78,7 @@ export async function explain(state, { actions, payments = [] }, me, { balance, 
     found.push({ key: undefined, reason: "funds", text: `This needs ${cost} coin; you have ${balance}.` });
   return found;
 }
+
+/** Whether `explain`'s answer for `write` says it landed: every action reads as written. */
+export const landed = (write, why) =>
+  why.length === write.actions.length && why.every((w) => w.reason === "done");

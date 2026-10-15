@@ -9,7 +9,7 @@ import * as door from "../client/door.mjs";
 import * as launch from "../client/launch.mjs";
 import * as market from "../client/market.mjs";
 import * as read from "../client/read.mjs";
-import { explain } from "../client/refusal.mjs";
+import { explain, landed } from "../client/refusal.mjs";
 import * as ship from "../client/ship.mjs";
 import { chainSpec, premineRecipient, tip, view, volumeLoader } from "../client/state.mjs";
 import { verify } from "../client/verify.mjs";
@@ -21,7 +21,7 @@ import {
 
 // Settings, kept in this browser only.
 
-const DEFAULTS = { node: "", home: "Nexus/fanfare", profile: "Nexus/moniker" };
+const DEFAULTS = { node: "", home: "Nexus/fanfare", profile: "Nexus/moniker", origins: "" };
 const store = {
   get(key, fallback) {
     try {
@@ -137,9 +137,9 @@ async function perform(chain, w, say) {
   } catch (error) {
     if (error instanceof Said) return say(error.message, "bad"), false;
     const why = /refused/i.test(error?.message ?? "")
-      ? await explain(await stateOf(chain), w, me, { balance: await balanceOf(me, chain) }).catch(() => [])
+      ? (await explain(await stateOf(chain), w, me, { balance: await balanceOf(me, chain) }).catch(() => [])).filter((x) => x.reason !== "done")
       : [];
-    say(why.length > 0 ? why.map((w) => w.text).join(" ") : walletMessage(error), "bad");
+    say(why.length > 0 ? why.map((x) => x.text).join(" ") : walletMessage(error), "bad");
     return false;
   }
   say("Sent. Waiting for a block…", "wait");
@@ -147,9 +147,9 @@ async function perform(chain, w, say) {
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const why = await explain(await stateOf(chain), w, me).catch(() => []);
-    if (why.length > 0 && why.every((w) => w.reason === "done")) return say("Done.", "good"), true;
-    const against = why.filter((w) => w.reason !== "done");
-    if (against.length > 0) return say(against.map((w) => w.text).join(" "), "bad"), false;
+    if (landed(w, why)) return say("Done.", "good"), true;
+    const against = why.filter((x) => x.reason !== "done");
+    if (against.length > 0) return say(against.map((x) => x.text).join(" "), "bad"), false;
   }
   say("Sent, not in a block yet. It may still land.", "wait");
   return false;
@@ -243,8 +243,11 @@ async function loadArtist(name) {
   const withTickets = await Promise.all(
     listings.map(async (listing) => {
       const tickets = await read.tickets(state, artist, listing.name);
-      const extra = listing.kind === "qa" ? { questions: await read.questions(state, artist, listing.name) } : {};
-      return { ...listing, tickets, ...summary(listing, tickets), ...extra };
+      const questions = listing.kind === "qa" ? await read.questions(state, artist, listing.name) : undefined;
+      // Used up: checked in at the door, or a slot whose question is answered.
+      const used = listing.kind === "ticket" ? await read.checkedIn(state, artist, listing.name)
+        : new Set((questions ?? []).filter((q) => q.answer !== undefined).map((q) => q.ticket.id));
+      return { ...listing, tickets, ...summary(listing, tickets, used), ...(questions && { questions }) };
     }),
   );
   const isArtist = me !== null && me === artist;
@@ -274,6 +277,7 @@ async function showArtist(route, id) {
       <div><h1>${esc(title)}</h1>
         <p class="small"><span class="mono muted">${esc(p.chain.join("/"))}</span> · ${badge(verdict)}</p>
         ${p.card.description ? `<p>${esc(p.card.description)}</p>` : ""}
+        ${p.card.links?.length ? `<ul class="links">${p.card.links.filter((l) => /^https?:\/\//i.test(l.url)).map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(l.label || l.url)} ↗</a></li>`).join("")}</ul>` : ""}
       </div>
       <div class="head-acts">${p.isArtist || p.staff.includes(me) ? `<a class="btn" href="#/door/${encodeURIComponent(p.name)}">Door</a>` : ""}${p.isArtist ? `<button class="btn primary" type="button" data-act="new-listing">New listing</button>` : ""}</div>
     </section>
@@ -305,7 +309,7 @@ function listingCard(p, l) {
     <header><div><h3>${esc(l.title)}</h3>${meta ? `<p class="muted small">${meta}</p>` : ""}</div>
       <p class="small muted">${plural(l.total, one, many)} · ${l.held} held by fans${l.cheapest !== undefined ? ` · from <strong>${coins(l.cheapest)}</strong>` : l.total > 0 ? " · none for sale" : ""}</p></header>
     ${mineHeld.length ? `<p class="small">You hold ${mineHeld.map((t) => `<strong>${esc(seatOf(l.name, t.id))}</strong>`).join(", ")} · <a href="#/me">My tickets</a></p>` : ""}
-    ${sale.length ? `<ul class="seats">${sale.map((t) => `<li><span>${esc(seatOf(l.name, t.id))}${t.holder !== p.artist ? ` <span class="tag">resale</span>` : ""}</span><span class="price">${coins(t.price)}</span>${t.holder === me ? `<span class="muted small">${p.isArtist && t.holder === p.artist ? "on sale" : "yours"}</span>` : `<button class="btn small" type="button" data-act="buy" data-listing="${esc(l.name)}" data-ticket="${esc(t.id)}">${l.kind === "qa" ? "Buy and ask" : "Buy"}</button>`}</li>`).join("")}</ul>` : ""}
+    ${sale.length ? `<ul class="seats">${sale.map((t) => `<li><span>${esc(seatOf(l.name, t.id))}${t.holder !== p.artist ? ` <span class="tag">resale</span>` : ""}${l.used.has(t.id) ? ` <span class="tag used">${l.kind === "qa" ? "answered" : "used"}</span>` : ""}</span><span class="price">${coins(t.price)}</span>${t.holder === me ? `<span class="muted small">${p.isArtist && t.holder === p.artist ? "on sale" : "yours"}</span>` : `<button class="btn small" type="button" data-act="buy" data-listing="${esc(l.name)}" data-ticket="${esc(t.id)}">${l.kind === "qa" ? "Buy and ask" : "Buy"}</button>`}</li>`).join("")}</ul>` : ""}
     ${l.kind === "qa" ? qaBlock(p, l) : ""}
     <div class="form-slot"></div>
   </article>`;
@@ -341,7 +345,8 @@ function openForm(slot, html) {
 }
 
 function buyForm(button) {
-  const l = page.listings.find((x) => x.name === button.dataset.listing);
+  const p = page;
+  const l = p.listings.find((x) => x.name === button.dataset.listing);
   const t = l?.tickets.find((x) => x.id === button.dataset.ticket);
   if (!t) return;
   const card = button.closest(".listing");
@@ -350,34 +355,43 @@ function buyForm(button) {
     : l.kind === "merch"
       ? `<fieldset><legend>Ship to</legend><input name="name" placeholder="Name" required autocomplete="name"><input name="line1" placeholder="Address" required autocomplete="address-line1"><input name="line2" placeholder="Apartment, suite (optional)" autocomplete="address-line2"><div class="row"><input name="city" placeholder="City" required autocomplete="address-level2"><input name="postcode" placeholder="Postcode" autocomplete="postal-code"></div><input name="country" placeholder="Country" required autocomplete="country-name"><p class="small muted">Sealed to the artist: only their wallet opens it.</p></fieldset>`
       : "";
+  const used = l.used.has(t.id)
+    ? `<br><span class="warn-text">${l.kind === "qa" ? "This slot's question was already answered. The artist will see your question, but answering again is up to them." : "This ticket was already checked in at the door: it won't get anyone in again."}</span>`
+    : "";
   openForm($(".form-slot", card), `<form class="inline" data-act="confirm-buy" data-listing="${esc(l.name)}" data-ticket="${esc(t.id)}">
-    <p><strong>${esc(l.title)} · ${esc(seatOf(l.name, t.id))}</strong> for <strong>${coins(t.price)} ${esc(page.name)}</strong>${t.holder !== page.artist ? ` <span class="muted small">resold by ${esc(short(t.holder))}</span>` : ""}, plus a fee of 1.
-    ${page.balance !== undefined && page.balance < t.price + 1n ? `<br><span class="warn-text">You have ${coins(page.balance)} ${esc(page.name)}. <button class="linkish" type="button" data-act="buy-coin">Buy ${esc(page.name)}</button></span>` : ""}</p>
+    <p><strong>${esc(l.title)} · ${esc(seatOf(l.name, t.id))}</strong> for <strong>${coins(t.price)} ${esc(p.name)}</strong>${t.holder !== p.artist ? ` <span class="muted small">resold by ${esc(short(t.holder))}</span>` : ""}, plus a fee of 1.${used}
+    ${p.balance !== undefined && p.balance < t.price + 1n ? `<br><span class="warn-text">You have ${coins(p.balance)} ${esc(p.name)}. <button class="linkish" type="button" data-act="buy-coin">Buy ${esc(p.name)}</button></span>` : ""}</p>
     ${extra}
     <div class="acts"><button class="btn primary" type="submit">Buy in wallet</button><button class="btn ghost" type="button" data-act="close-form">Cancel</button></div>
     <p class="status" hidden></p></form>`);
 }
 
+/** Whether the page still shows `p`: a form opened on it may write for it. */
+const still = (p) => page === p;
+
 async function confirmBuy(form) {
+  const p = page;
   const say = sayer($(".status", form));
-  const l = page.listings.find((x) => x.name === form.dataset.listing);
+  const l = p.listings.find((x) => x.name === form.dataset.listing);
   const seen = l?.tickets.find((x) => x.id === form.dataset.ticket);
+  if (!seen) return say("This ticket is gone; look again.", "bad");
   if (!me) await connect().catch((e) => say(e.message, "bad"));
-  if (!me) return;
+  if (!me || !still(p)) return;
   if (seen.holder === me) return say("This one is already yours.", "bad");
   const w = write.buy(seen, me);
   const data = new FormData(form);
   if (l.kind === "qa") {
-    w.actions.push(...(await write.changes(page.state, write.question(me, page.artist, seen.id, String(data.get("question")).trim()))));
+    w.actions.push(...(await write.changes(p.state, write.question(me, p.artist, seen.id, String(data.get("question")).trim()))));
   }
   if (l.kind === "merch") {
-    const key = page.artist && (await profiles.getField(await (profileState ??= stateOf(PROFILE())), page.artist, ship.KEY_FIELD).catch(() => undefined));
+    const key = p.artist && (await profiles.getField(await (profileState ??= stateOf(PROFILE())), p.artist, ship.KEY_FIELD).catch(() => undefined));
     if (!key) return say("The artist hasn't set up shipping yet, so an address can't be sealed to them.", "bad");
     const address = Object.fromEntries([...data].filter(([, v]) => String(v).trim() !== "").map(([k, v]) => [k, String(v).trim()]));
-    w.actions.push(...(await write.changes(page.state, write.ship(me, page.artist, seen.id, await ship.seal(key, address)))));
+    w.actions.push(...(await write.changes(p.state, write.ship(me, p.artist, seen.id, await ship.seal(key, address)))));
   }
+  if (!still(p)) return;
   setBusy(form, true);
-  if (await perform(page.chain, w, say)) setTimeout(rerender, 800);
+  if (await perform(p.chain, w, say)) setTimeout(rerender, 800);
   setBusy(form, false);
 }
 
@@ -396,6 +410,7 @@ function newListingForm() {
 }
 
 async function createListing(form) {
+  const p = page;
   const say = sayer($(".status", form));
   const data = Object.fromEntries(new FormData(form));
   const count = Number(amountIn(data.count) ?? 0n);
@@ -404,23 +419,26 @@ async function createListing(form) {
   if (price === undefined) return say("The price is a whole number above zero.", "bad");
   const title = data.title.trim();
   let name = slug(title);
-  const taken = new Set(page.listings.map((l) => l.name));
+  const taken = new Set(p.listings.map((l) => l.name));
   for (let n = 2; taken.has(name); n++) name = `${slug(title)}-${n}`;
   if (!isItemName(name)) return say("Give it a title with letters or digits.", "bad");
   const record = { kind: data.kind, title, ...(data.venue.trim() && { venue: data.venue.trim() }), ...(data.date && { date: data.date }) };
   const ids = newIds(name, [], count);
-  const writes = [...write.listing(page.artist, name, record), ...ids.flatMap((id) => write.mint(page.artist, id, { price }))];
+  const writes = [...write.listing(p.artist, name, record), ...ids.flatMap((id) => write.mint(p.artist, id, { price }))];
   setBusy(form, true);
-  if (await perform(page.chain, { actions: await write.changes(page.state, writes) }, say)) setTimeout(rerender, 800);
+  if (await perform(p.chain, { actions: await write.changes(p.state, writes) }, say)) setTimeout(rerender, 800);
   setBusy(form, false);
 }
 
 async function answer(form) {
+  const p = page;
   const say = sayer($(".status", form));
   const text = new FormData(form).get("answer").trim();
-  if (!text) return;
+  const asked = p.listings.flatMap((l) => l.questions ?? []).find((q) => q.ticket.id === form.dataset.ticket);
+  if (!text || !asked) return;
   setBusy(form, true);
-  if (await perform(page.chain, { actions: await write.changes(page.state, write.answer(page.artist, form.dataset.ticket, text)) }, say)) setTimeout(rerender, 800);
+  const w = { actions: await write.changes(p.state, write.answer(p.artist, asked.ticket.id, asked.text, text)) };
+  if (await perform(p.chain, w, say)) setTimeout(rerender, 800);
   setBusy(form, false);
 }
 
@@ -429,15 +447,17 @@ function staffForm() {
 }
 
 async function saveStaff(form) {
+  const p = page;
   const say = sayer($(".status", form));
   const address = new FormData(form).get("staff").trim();
   if (!profiles.isAddress(address)) return say("That isn't a Lattice address.", "bad");
   setBusy(form, true);
-  if (await perform(page.chain, { actions: await write.changes(page.state, write.staff(page.artist, address)) }, say)) setTimeout(rerender, 800);
+  if (await perform(p.chain, { actions: await write.changes(p.state, write.staff(p.artist, address)) }, say)) setTimeout(rerender, 800);
   setBusy(form, false);
 }
 
 async function openShipping() {
+  const p = page;
   const box = $("#shipping");
   box.hidden = false;
   const say = (text) => (box.innerHTML = `<p class="small muted">${esc(text)}</p>`);
@@ -448,22 +468,29 @@ async function openShipping() {
   } catch (error) {
     return say(walletMessage(error));
   }
-  const published = await profiles.getField(await (profileState ??= stateOf(PROFILE())), page.artist, ship.KEY_FIELD).catch(() => undefined);
+  const published = await profiles.getField(await (profileState ??= stateOf(PROFILE())), p.artist, ship.KEY_FIELD).catch(() => undefined);
   const rows = [];
-  for (const l of page.listings.filter((x) => x.kind === "merch")) {
-    for (const { ticket, sealed } of await read.shipments(page.state, page.artist, l.name)) {
+  for (const l of p.listings.filter((x) => x.kind === "merch")) {
+    for (const { ticket, sealed } of await read.shipments(p.state, p.artist, l.name)) {
       const address = await ship.open(key.privateKey, sealed);
       rows.push(`<li><strong>${esc(l.title)} · ${esc(seatOf(l.name, ticket.id))}</strong> <span class="mono muted">${esc(short(ticket.holder))}</span><br>${address ? Object.values(address).map(esc).join(", ") : `<span class="muted">Sealed to another key</span>`}</li>`);
     }
   }
-  box.innerHTML = `${published === key.publicKey ? "" : `<p class="note">Fans can't send you addresses until your key is on your profile. <button class="btn small" type="button" data-act="publish-key" data-key="${esc(key.publicKey)}">Put it on your profile</button></p><p class="status" hidden></p>`}
-    ${rows.length ? `<ul class="addresses">${rows.join("")}</ul>` : `<p class="small muted">No addresses yet.</p>`}`;
+  if (!still(p)) return;
+  // The key comes from a signature bound to this site, so the same wallet on
+  // another Fanfare site makes another key.
+  const keyNote = published === key.publicKey ? ""
+    : published === undefined
+      ? `<p class="note">Fans can't send you addresses until your key is on your profile. <button class="btn small" type="button" data-act="publish-key" data-key="${esc(key.publicKey)}">Put it on your profile</button></p><p class="status" hidden></p>`
+      : `<p class="note warn">The key on your profile was made on another Fanfare site, so addresses sealed to it open only there. <button class="btn small" type="button" data-act="publish-key" data-key="${esc(key.publicKey)}">Use this site's key instead</button> Addresses already sealed to the old key will still only open on that site.</p><p class="status" hidden></p>`;
+  box.innerHTML = `${keyNote}${rows.length ? `<ul class="addresses">${rows.join("")}</ul>` : `<p class="small muted">No addresses yet.</p>`}`;
 }
 
 async function publishKey(button) {
+  const p = page;
   const say = sayer(button.closest(".note").nextElementSibling);
   const state = await (profileState ??= stateOf(PROFILE()));
-  const w = await profiles.setField(state, page.artist, ship.KEY_FIELD, button.dataset.key);
+  const w = await profiles.setField(state, p.artist, ship.KEY_FIELD, button.dataset.key);
   button.disabled = true;
   if (await perform(PROFILE(), w, say)) profileState = undefined;
   button.disabled = false;
@@ -472,48 +499,57 @@ async function publishKey(button) {
 // The coin market.
 
 async function showMarket(selling) {
+  const p = page;
   const box = $("#market");
   box.hidden = false;
   if (selling) {
-    box.innerHTML = `<form class="inline" data-act="sell-coin-confirm"><p class="small muted">Offer ${esc(page.name)} for Fanfare coin. Anyone can take the whole offer; your wallet locks the coin until then.</p>
-      <div class="row"><span><label for="sell-coin">${esc(page.name)} to sell</label><input id="sell-coin" name="coin" inputmode="numeric" required></span><span><label for="sell-price">Fanfare coin you want</label><input id="sell-price" name="price" inputmode="numeric" required></span></div>
+    box.innerHTML = `<form class="inline" data-act="sell-coin-confirm"><p class="small muted">Offer ${esc(p.name)} for Fanfare coin. Anyone can take the whole offer; your wallet locks the coin until then.</p>
+      <div class="row"><span><label for="sell-coin">${esc(p.name)} to sell</label><input id="sell-coin" name="coin" inputmode="numeric" required></span><span><label for="sell-price">Fanfare coin you want</label><input id="sell-price" name="price" inputmode="numeric" required></span></div>
       <div class="acts"><button class="btn primary" type="submit">Offer in wallet</button></div><p class="status" hidden></p></form>`;
     return;
   }
   box.innerHTML = `<p class="small muted">Reading offers…</p>`;
   let offers;
   try {
-    offers = await market.offers(nodeURL(), page.chain);
+    offers = await market.offers(nodeURL(), p.chain);
   } catch (error) {
-    box.innerHTML = `<p class="small warn-text">${esc(error.message)}</p>`;
+    if (still(p)) box.innerHTML = `<p class="small warn-text">${esc(error.message)}</p>`;
     return;
   }
+  if (!still(p)) return;
   box.innerHTML = offers.length === 0
-    ? `<p class="small muted">Nobody is selling ${esc(page.name)} right now. You can also earn it by mining ${esc(page.chain.join("/"))}.</p>`
-    : `<form class="inline" data-act="buy-coin-confirm"><table class="offers"><thead><tr><th>${esc(page.name)}</th><th>for</th><th>each</th></tr></thead><tbody>${offers.slice(0, 8).map((o) => `<tr><td>${coins(o.coin)}</td><td>${coins(o.price)}</td><td class="muted">${(Number(o.price) / Number(o.coin)).toPrecision(3)}</td></tr>`).join("")}</tbody></table>
-      <label for="want">How much ${esc(page.name)}?</label><input id="want" name="want" inputmode="numeric" required>
-      ${page.homeBalance !== undefined ? `<p class="small muted">You have ${coins(page.homeBalance)} Fanfare coin.</p>` : ""}
-      <div class="acts"><button class="btn primary" type="submit">Buy in wallet</button></div><p class="status" hidden></p></form>`;
+    ? `<p class="small muted">Nobody is selling ${esc(p.name)} right now. You can also earn it by mining ${esc(p.chain.join("/"))}.</p>`
+    : `<form class="inline" data-act="buy-coin-confirm"><table class="offers"><thead><tr><th>${esc(p.name)}</th><th>for</th><th>each</th></tr></thead><tbody>${offers.slice(0, 8).map((o) => `<tr><td>${coins(o.coin)}</td><td>${coins(o.price)}</td><td class="muted">${(Number(o.price) / Number(o.coin)).toPrecision(3)}</td></tr>`).join("")}</tbody></table>
+      ${offers.length > 8 ? `<p class="small muted">and ${plural(offers.length - 8, "more offer")}.</p>` : ""}
+      <label for="want">How much ${esc(p.name)}?</label><input id="want" name="want" inputmode="numeric" required>
+      ${p.homeBalance !== undefined ? `<p class="small muted">You have ${coins(p.homeBalance)} Fanfare coin.</p>` : ""}
+      <div class="acts"><button class="btn primary" type="submit">Find offers</button></div><p class="status" hidden></p><div class="acts" id="coin-go" hidden></div></form>`;
   box.offers = offers;
 }
 
+/** Offers are taken whole, so the page says what that comes to and asks again before the wallet does. */
 function buyCoin(form) {
+  const p = page;
   const say = sayer($(".status", form));
+  const go = $("#coin-go", form);
+  go.hidden = true;
   const want = amountIn(new FormData(form).get("want"));
   if (want === undefined) return say("A whole number above zero.", "bad");
   const picked = market.pick(form.closest("#market").offers, want);
-  if (!picked) return say(`Offers hold less than ${coins(want)} ${page.name} in all.`, "bad");
-  say(`Taking ${plural(picked.offers.length, "offer")}: ${coins(picked.coin)} ${page.name} for ${coins(picked.price)} Fanfare coin. Your wallet takes it from here.`, "wait");
-  location.href = market.buyRequest(page.chain, picked.offers);
+  if (!picked) return say(`Offers hold less than ${coins(want)} ${p.name} in all.`, "bad");
+  say(`Offers are taken whole: ${plural(picked.offers.length, "offer")} come to ${coins(picked.coin)} ${p.name} for ${coins(picked.price)} Fanfare coin.`);
+  go.hidden = false;
+  go.innerHTML = `<a class="btn primary" href="${esc(market.buyRequest(p.chain, picked.offers))}">Buy ${coins(picked.coin)} ${esc(p.name)} in wallet</a>`;
 }
 
 function sellCoin(form) {
+  const p = page;
   const say = sayer($(".status", form));
   const data = new FormData(form);
   const [coin, price] = [amountIn(data.get("coin")), amountIn(data.get("price"))];
   if (coin === undefined || price === undefined) return say("Whole numbers above zero.", "bad");
   say("Your wallet takes it from here.", "wait");
-  location.href = market.sellRequest(page.chain, coin, price);
+  location.href = market.sellRequest(p.chain, coin, price);
 }
 
 // My tickets: what the connected account holds on every artist chain.
@@ -559,7 +595,7 @@ async function showPass(button) {
   const { row, entry, ticket } = heldRow(button);
   const slot = openForm($(".form-slot", row), `<div class="pass"><p class="small muted">Approve in your wallet…</p></div>`);
   try {
-    const code = await door.pass(lattice(), entry.info.artist, ticket.id);
+    const code = await door.pass(lattice(), ORIGIN, entry.info.artist, ticket.id);
     const qr = qrcode(0, "L");
     qr.addData(code);
     qr.make();
@@ -600,7 +636,8 @@ async function give(form) {
   setBusy(form, false);
 }
 
-// The door.
+// The door: staff pick the show, then scan. A good pass is checked in at
+// once, and the page says "Let them in" only when the check-in has landed.
 
 let scanning = null;
 function stopScan() {
@@ -608,39 +645,57 @@ function stopScan() {
   scanning = null;
 }
 
+/** The Fanfare sites whose passes this door accepts: this one and any in Settings. */
+const acceptedOrigins = () => [ORIGIN, ...settings.origins.split(/[\s,]+/).filter(Boolean)];
+
+let doorAt; // { info, listing, seen: Set of ticket ids this door let in, busy }
+
 async function showDoor(route, id) {
   let info;
+  let listings;
   try {
     info = await chainInfo(route.name);
+    listings = info.artist ? (await read.listings(await stateOf(info.chain), info.artist)).filter((l) => l.kind === "ticket") : [];
   } catch (error) {
     if (id === renderId) main().innerHTML = failure(error, chainOf(route.name).join("/"));
     return;
   }
   if (id !== renderId) return;
-  main().innerHTML = `<a class="back" href="${artistHref(route.name)}">← ${esc(route.name)}</a><h1>Door</h1>
-    <p class="muted">Scan a fan's pass. ${me ? "" : "Connect the wallet you check people in with."}</p>
+  const listing = route.listing && listings.find((l) => l.name === route.listing);
+  if (!listing) {
+    main().innerHTML = `<a class="back" href="${artistHref(route.name)}">← ${esc(route.name)}</a><h1>Door</h1><p class="muted">Which show?</p>
+      ${listings.length ? `<ul class="shows">${listings.map((l) => `<li><a class="card artist" href="#/door/${encodeURIComponent(route.name)}/${l.name.split("/").map(encodeURIComponent).join("/")}"><span><strong>${esc(l.title)}</strong><span class="muted small">${[l.venue, l.date].filter(Boolean).map(esc).join(" · ")}</span></span></a></li>`).join("")}</ul>` : `<p class="muted">No shows yet.</p>`}`;
+    return;
+  }
+  const same = doorAt?.info.name === info.name && doorAt.listing.name === listing.name;
+  doorAt = { info, listing, seen: same ? doorAt.seen : new Set(), busy: false };
+  main().innerHTML = `<a class="back" href="#/door/${encodeURIComponent(route.name)}">← Shows</a><h1>Door · ${esc(listing.title)}</h1>
+    <p class="muted">${[listing.venue, listing.date].filter(Boolean).map(esc).join(" · ")}${me ? "" : " · Connect the wallet you check people in with."}</p>
     <div class="door card"><video id="camera" playsinline muted hidden></video>
       <div class="acts"><button class="btn primary" type="button" data-act="camera">Use camera</button></div>
       <form data-act="check-pass" class="inline"><label for="code">Or paste a pass</label><textarea id="code" name="code" rows="3" class="mono"></textarea><button class="btn" type="submit">Check</button></form>
       <div id="verdict" aria-live="assertive"></div></div>`;
-  page = { ...info };
 }
 
 async function startCamera(button) {
-  if (!("BarcodeDetector" in window)) return showVerdict({ ok: false, text: "This browser can't read QR codes from the camera. Paste the pass instead." });
+  if (!("BarcodeDetector" in window)) return showVerdict("bad", "Stop", "This browser can't read QR codes from the camera. Paste the pass instead.");
+  const id = renderId;
+  // Held before any wait, so leaving the page stops it even mid-prompt.
+  let stopped = false;
+  let stream;
+  scanning = { stop: () => ((stopped = true), stream?.getTracks().forEach((t) => t.stop())) };
   const video = $("#camera");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    if (stopped || id !== renderId) return stream.getTracks().forEach((t) => t.stop());
     video.srcObject = stream;
     video.hidden = false;
     await video.play();
     button.hidden = true;
     const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
-    let stopped = false;
-    scanning = { stop: () => ((stopped = true), stream.getTracks().forEach((t) => t.stop())) };
     let last = "";
-    while (!stopped) {
-      const [code] = await detector.detect(video).catch(() => []);
+    while (!stopped && id === renderId) {
+      const [code] = doorAt.busy ? [] : await detector.detect(video).catch(() => []);
       if (code && code.rawValue !== last) {
         last = code.rawValue;
         await checkPass(code.rawValue);
@@ -648,37 +703,46 @@ async function startCamera(button) {
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   } catch (error) {
-    showVerdict({ ok: false, text: `The camera didn't start: ${error.message}` });
+    if (!stopped) showVerdict("bad", "Stop", `The camera didn't start: ${error.message}`);
   }
 }
 
-function showVerdict(v, actions = "") {
-  $("#verdict").innerHTML = `<div class="verdict ${v.ok ? "good" : "bad"}"><strong>${v.ok ? "Let them in" : "Stop"}</strong><p>${esc(v.text)}</p>${actions}<p class="status" hidden></p></div>`;
+function showVerdict(kind, head, text) {
+  const box = $("#verdict");
+  if (box) box.innerHTML = `<div class="verdict ${kind}"><strong>${esc(head)}</strong><p>${esc(text)}</p><p class="status" hidden></p></div>`;
+  return box;
 }
 
-let checked;
 async function checkPass(code) {
-  const scanned = door.readPass(code.trim());
-  if (!scanned) return showVerdict({ ok: false, text: "That isn't a Fanfare pass." });
-  if (scanned.artist !== page.artist) return showVerdict({ ok: false, text: "This pass is for another artist's ticket." });
-  const state = await stateOf(page.chain);
-  const ticket = await read.ticket(state, page.artist, scanned.id);
-  const v = await door.check(sdk, ORIGIN, scanned, ticket, ticket ? await read.checkins(state, page.artist, ticket.id) : []);
-  checked = v.ok ? ticket : undefined;
-  showVerdict(v.ok ? { ok: true, text: `Ticket ${scanned.id}, held by ${short(ticket.holder)}.` } : v,
-    v.ok ? `<button class="btn primary" type="button" data-act="checkin">Check in</button>` : "");
-}
-
-async function checkIn(button) {
-  const say = sayer(button.parentElement.querySelector(".status"));
-  const state = await stateOf(page.chain);
-  button.disabled = true;
-  if (!me) await connect().catch((e) => say(e.message, "bad"));
-  if (me && me !== page.artist && !(await read.staff(state, page.artist)).includes(me)) {
-    button.disabled = false;
-    return say("This wallet isn't on the artist's door staff, so its check-in won't count.", "bad");
+  const at = doorAt;
+  if (!at || at.busy) return;
+  const scanned = door.readPass(String(code).trim());
+  if (!scanned) return showVerdict("bad", "Stop", "That isn't a Fanfare pass.");
+  if (scanned.artist !== at.info.artist) return showVerdict("bad", "Stop", "This pass is for another artist's ticket.");
+  if (at.seen.has(scanned.id)) return showVerdict("bad", "Stop", `Ticket ${scanned.id} was already let in at this door.`);
+  at.busy = true;
+  try {
+    const state = await stateOf(at.info.chain);
+    const ticket = await read.ticket(state, at.info.artist, scanned.id);
+    const checkins = ticket ? await read.checkins(state, at.info.artist, ticket.id) : [];
+    const v = await door.check(sdk, acceptedOrigins(), scanned, at.listing, ticket, checkins);
+    if (!v.ok) return showVerdict("bad", "Stop", v.text);
+    if (!me) await connect().catch(() => {});
+    if (!me) return showVerdict("bad", "Wait", "Connect the wallet you check people in with.");
+    if (me !== at.info.artist && !(await read.staff(state, at.info.artist)).includes(me))
+      return showVerdict("bad", "Wait", "This wallet isn't on the artist's door staff, so its check-in wouldn't count.");
+    const label = `${seatOf(at.listing.name, ticket.id)}, held by ${short(ticket.holder)}`;
+    const box = showVerdict("wait", "Checking in…", `${at.listing.title} · ${label}. The pass is good; recording the check-in.`);
+    const say = sayer($(".status", box));
+    // The ticket id is fixed here: a scan meanwhile can't change what is checked in.
+    const w = { actions: await write.changes(state, write.checkin(me, at.info.artist, ticket.id)) };
+    if (await perform(at.info.chain, w, say)) {
+      at.seen.add(ticket.id);
+      if (doorAt === at) showVerdict("good", "Let them in", `${at.listing.title} · ${label}. Checked in.`);
+    }
+  } finally {
+    at.busy = false;
   }
-  await perform(page.chain, { actions: await write.changes(state, write.checkin(me, page.artist, checked.id)) }, say);
 }
 
 // Launch.
@@ -724,7 +788,7 @@ async function launchCommand(form) {
   steps.hidden = false;
   steps.innerHTML = `<p>Your chain starts on your own node, and its first block pays ${coins(launch.premineAmount(spec))} ${esc(name)} to your wallet, <span class="mono">${esc(short(me))}</span>.</p>
     <ol><li>Save <a href="${blob}" download="${esc(file)}">${esc(file)}</a> and <a href="./fanfare_policy.wasm" download>fanfare_policy.wasm</a>.</li>
-    <li>Run, on your node:<pre class="mono">${esc(`lattice child create ${settings.home}   # once, if your node doesn't host it\nlattice ${launch.createArguments({ name, specFile: file, moduleFile: "fanfare_policy.wasm", artist: me }).join(" ")}`)}</pre></li>
+    <li>Run, on your node:<pre class="mono">${esc(`lattice child create ${settings.home}   # once, if your node doesn't host it\nlattice ${launch.createArguments({ name, specFile: file, moduleFile: "fanfare_policy.wasm", artist: me, home: HOME() }).join(" ")}`)}</pre></li>
     <li>Your node mines your chain's first block with its next one. Then <a href="${artistHref(name)}">open your page</a> and put your first show on sale.</li></ol>`;
 }
 
@@ -735,12 +799,13 @@ function openSettings() {
   dialog.querySelector("[name=node]").value = settings.node;
   dialog.querySelector("[name=home]").value = settings.home;
   dialog.querySelector("[name=profile]").value = settings.profile;
+  dialog.querySelector("[name=origins]").value = settings.origins;
   dialog.showModal();
 }
 
 function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form));
-  Object.assign(settings, { node: data.node.trim(), home: data.home.trim() || DEFAULTS.home, profile: data.profile.trim() || DEFAULTS.profile });
+  Object.assign(settings, { node: data.node.trim(), home: data.home.trim() || DEFAULTS.home, profile: data.profile.trim() || DEFAULTS.profile, origins: data.origins.trim() });
   store.set("settings", settings);
   chains.clear();
   verdicts.clear();
@@ -787,7 +852,6 @@ const clicks = {
   resell: resellForm,
   give: giveForm,
   camera: startCamera,
-  checkin: checkIn,
   "change-defaults": () => {
     $("#ln-change").hidden = false;
     $("#ln-defaults").hidden = true;

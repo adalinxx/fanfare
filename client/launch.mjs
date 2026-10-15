@@ -51,19 +51,19 @@ export function premineAmount({ premine, initialReward, halvingInterval }) {
   return total;
 }
 
-/** An artist chain's path. A name is one non-empty path segment, first come. */
-export function chainPath(name) {
+/** An artist chain's path under `home`. A name is one non-empty path segment, first come. */
+export function chainPath(name, home = HOME) {
   if (typeof name !== "string" || name === "" || name.includes("/")) throw new Error(`bad artist name: ${name}`);
-  return [...HOME, name];
+  return [...home, name];
 }
 
 /**
  * The `lattice` arguments that create the artist chain on the artist's node:
  * `specFile` holds `spec`, `moduleFile` the policy module it names.
  */
-export function createArguments({ name, specFile, moduleFile, artist }) {
+export function createArguments({ name, specFile, moduleFile, artist, home = HOME }) {
   return [
-    "child", "create", chainPath(name).join("/"),
+    "child", "create", chainPath(name, home).join("/"),
     "--spec", specFile,
     ...(moduleFile ? ["--policy-module", moduleFile] : []),
     "--premine-to", artist,

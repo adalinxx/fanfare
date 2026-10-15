@@ -134,20 +134,42 @@ export async function checkins(state, artist, id) {
 /**
  * The questions on a Q&A listing: for each slot whose holder asked one,
  * `{ ticket, text, answer? }`. A question counts only from the slot's
- * current holder, so a slot sold on carries its new holder's question.
+ * current holder, so a slot sold on carries its new holder's question. An
+ * answer names the question it answers (write.mjs `answer`), so it counts
+ * only while the slot still asks that question.
  */
 export async function questions(state, artist, name) {
   const slots = await tickets(state, artist, name);
   const asked = await Promise.all(
     slots.map(async (slot) => {
-      const [text, answer] = await Promise.all([
+      const [text, answered] = await Promise.all([
         state.get(`user/${slot.holder}/question/${artist}/${slot.id}`),
         state.get(`user/${artist}/answer/${slot.id}`),
       ]);
-      return text === undefined ? undefined : { ticket: slot, text, ...(answer !== undefined && { answer }) };
+      if (text === undefined) return undefined;
+      const record = parse(answered);
+      const answer = isObject(record) && record.question === text && typeof record.answer === "string" ? record.answer : undefined;
+      return { ticket: slot, text, ...(answer !== undefined && { answer }) };
     }),
   );
   return asked.filter(Boolean);
+}
+
+/**
+ * The tickets of listing `name` checked in by the artist or their staff, as
+ * a set of ids: one read of the listing's check-ins, not one per ticket.
+ */
+export async function checkedIn(state, artist, name) {
+  const trusted = new Set([artist, ...(await staff(state, artist))]);
+  const prefix = `index/checkin/${artist}/`;
+  const found = new Set();
+  // `<prefix><name>/…` holds the one-off ticket `<name>` and every `<name>/…`.
+  for await (const [key] of state.list(`${prefix}${name}/`)) {
+    const rest = key.slice(prefix.length);
+    const cut = rest.lastIndexOf("/");
+    if (trusted.has(rest.slice(cut + 1))) found.add(rest.slice(0, cut));
+  }
+  return found;
 }
 
 /**

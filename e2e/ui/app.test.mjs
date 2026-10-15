@@ -171,6 +171,10 @@ before(async () => {
   // Fans get coin from the artist; the market's legs are the wallet's.
   assert.ok((await send(artist, wallet.writeRequest(CHAIN, { actions: [{ key: `user/${artist.address}/hello`, newValue: "1" }], payments: [{ to: alice.address, amount: 2000n }, { to: bob.address, amount: 2000n }] }))).ok);
   await until("fans funded", async () => (await balance(bob)) === 2000n);
+  // The artist's card on Moniker: a name, a site that doesn't list them back, a link.
+  const card = { name: "The Band", url: "https://band.invalid", links: [{ label: "Bandcamp", url: "https://band.invalid/music" }] };
+  assert.ok((await send(artist, wallet.writeRequest(PROFILE, { actions: [{ key: `user/${artist.address}/profile`, newValue: JSON.stringify(card) }] }))).ok);
+  await until("the card", async () => (await balance(artist, PROFILE)) < launch.premineAmount(launch.spec()));
 
   server = spawn("python3", ["-m", "http.server", String(appPort), "--bind", "127.0.0.1"], { cwd: here("../.."), stdio: "ignore" });
   await until("the page server", () => fetch(`http://127.0.0.1:${appPort}/app/`).then((r) => r.ok), 20);
@@ -187,13 +191,14 @@ after(async () => {
 let artistPage;
 let alicePage;
 
-test("the home page lists the artist, unverified, and the artist page reads its chain", async () => {
+test("the home page lists the artist by their Moniker name, their site not confirmed", async () => {
   artistPage = await person(artist);
   await visit(artistPage);
-  await artistPage.locator('[data-artist="band"]').filter({ hasText: "Unverified" }).waitFor();
+  await artistPage.locator('[data-artist="band"]').filter({ hasText: "The Band" }).filter({ hasText: "band.invalid · not confirmed" }).waitFor();
   await shot(artistPage, "1-home");
   await artistPage.click('[data-artist="band"]');
-  await artistPage.locator("h1", { hasText: "band" }).waitFor();
+  await artistPage.locator("h1", { hasText: "The Band" }).waitFor();
+  await artistPage.locator(".links a", { hasText: "Bandcamp" }).waitFor();
   assert.match(await artistPage.locator(".coin .big").textContent(), /^\d{2},\d{3},\d{3}$/);
   assert.equal(await artistPage.locator(".note.warn").count(), 0, "the default spec runs the Fanfare policy");
 });
@@ -225,7 +230,7 @@ test("a fan buys a ticket; a fan who saw it earlier is told it sold", async () =
 
   await bobPage.click('#l-berlin [data-ticket="berlin/1"]');
   await bobPage.click('form[data-act="confirm-buy"] button[type=submit]');
-  await status(bobPage, 'form[data-act="confirm-buy"]', "Someone else bought this ticket first.");
+  await status(bobPage, 'form[data-act="confirm-buy"]', "Someone else got this ticket first.");
   await shot(bobPage, "4-sold-to-someone-else");
   await bobPage.context().close();
 });
@@ -239,7 +244,8 @@ test("the fan's tickets: a pass for the door, and a resale price", async () => {
   await row.locator(".pass svg").waitFor();
   await shot(alicePage, "5-pass");
   // The QR code holds what the wallet signed; the scanner gets the same text.
-  code = await door.pass({ signMessage: ({ text }) => signMessage(alice, `http://127.0.0.1:${appPort}`, text) }, artist.address, "berlin/1");
+  const origin = `http://127.0.0.1:${appPort}`;
+  code = await door.pass({ signMessage: ({ text }) => signMessage(alice, origin, text) }, origin, artist.address, "berlin/1");
 
   await row.locator('[data-act="resell"]').click();
   await row.locator("#rp").fill("400");
@@ -248,17 +254,33 @@ test("the fan's tickets: a pass for the door, and a resale price", async () => {
   await alicePage.locator('li[data-ticket="berlin/1"] .tag', { hasText: "for sale at 400" }).waitFor({ timeout: 10_000 });
 });
 
-test("the door lets the holder in once", async () => {
+test("the door: pick the show, a good pass is checked in, and it works once", async () => {
   await visit(artistPage, "#/door/band");
+  await artistPage.click("a.card", { hasText: "Berlin" });
+  await artistPage.locator("h1", { hasText: "Door · Berlin" }).waitFor();
   await artistPage.fill("#code", code);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
-  await artistPage.locator(".verdict.good").waitFor();
+  await artistPage.locator(".verdict.good", { hasText: "Let them in" }).waitFor({ timeout: SECONDS * 1000 });
   await shot(artistPage, "6-door-ok");
-  await artistPage.click('[data-act="checkin"]');
-  await status(artistPage, ".verdict", "Done.");
+  // The same pass again at this door, then at a door that didn't see it.
+  await artistPage.click('form[data-act="check-pass"] button[type=submit]');
+  await artistPage.locator(".verdict.bad", { hasText: "already let in at this door" }).waitFor();
+  await visit(artistPage, "#/door/band/berlin");
+  await artistPage.fill("#code", code);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
   await artistPage.locator(".verdict.bad", { hasText: "already checked in" }).waitFor();
   await shot(artistPage, "7-door-used");
+});
+
+test("a checked-in ticket Alice still sells is marked used, and a buyer is warned", async () => {
+  const bobPage = await person(bob);
+  await visit(bobPage, "#/a/band");
+  const seat = bobPage.locator("#l-berlin .seats li", { hasText: "resale" });
+  await seat.locator(".tag.used").waitFor();
+  await seat.locator('[data-act="buy"]').click();
+  await bobPage.locator('form[data-act="confirm-buy"] .warn-text', { hasText: "already checked in" }).waitFor();
+  await shot(bobPage, "7b-used-warning");
+  await bobPage.context().close();
 });
 
 test("Q&A: a fan buys a slot and asks; the artist answers", async () => {
@@ -319,8 +341,10 @@ test("merch: the artist's key goes on their profile; a fan's address opens only 
 
   // At phone width nothing scrolls sideways.
   await artistPage.setViewportSize({ width: 390, height: 844 });
-  assert.ok(await artistPage.evaluate(() => document.documentElement.scrollWidth <= 390));
   await shot(artistPage, "12-phone");
+  const wide = await artistPage.evaluate(() =>
+    [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > 391).map((el) => `${el.tagName}.${el.className}`).slice(0, 5));
+  assert.deepEqual(wide, [], "nothing runs past the right edge");
   await artistPage.setViewportSize({ width: 1100, height: 900 });
 });
 

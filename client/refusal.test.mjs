@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as read from "./read.mjs";
-import { explain } from "./refusal.mjs";
+import { explain, landed } from "./refusal.mjs";
 import { chain } from "./test-chain.mjs";
 import * as write from "./write.mjs";
 
@@ -32,7 +32,7 @@ test("a ticket someone else bought first, or whose price changed", async () => {
   const late = write.buy(seen, ALICE);
   assert.ok(!c.submit(ALICE, late.actions, late.payments));
   assert.deepEqual(await explain(c.state, late, ALICE), [
-    { key: `own/${ARTIST}/berlin/A1`, reason: "sold", text: "Someone else bought this ticket first." },
+    { key: `own/${ARTIST}/berlin/A1`, reason: "sold", text: "Someone else got this ticket first." },
   ]);
   // Bob's own write landed.
   assert.deepEqual(await reasons(c, write.buy(seen, BOB), BOB), ["done"]);
@@ -70,7 +70,7 @@ test("what the policy refuses on a ticket that hasn't changed", async () => {
 
 test("records owned by someone else, a deleted listing, and too little coin", async () => {
   const c = await show();
-  const answer = { actions: await write.changes(c.state, write.answer(ARTIST, "qa/1", "hi")) };
+  const answer = { actions: await write.changes(c.state, write.answer(ARTIST, "qa/1", "q?", "hi")) };
   assert.ok(!c.submit(BOB, answer.actions));
   assert.deepEqual(await reasons(c, answer, BOB), ["not-yours"]);
   const checkin = { actions: await write.changes(c.state, write.checkin(ARTIST, ARTIST, "berlin/A1")) };
@@ -85,4 +85,29 @@ test("records owned by someone else, a deleted listing, and too little coin", as
   assert.deepEqual(await reasons(c, buy, ALICE, { balance: 250n }), ["funds"]);
   // Nothing in the way: the write may still land.
   assert.deepEqual(await explain(c.state, buy, ALICE, { balance: 251n }), []);
+});
+
+test("a write landed only when every action reads as written", async () => {
+  const c = await show();
+  const seat2 = await seat(c, "berlin/A2");
+  // A fan asks the same text they asked before: that action already reads as
+  // written, but the purchase beside it hasn't landed.
+  assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "berlin/A2", "Q")));
+  const w = write.buy(seat2, ALICE);
+  w.actions.push({ key: `user/${ALICE}/question/${ARTIST}/berlin/A2`, oldValue: "Q", newValue: "Q" });
+  const pending = await explain(c.state, w, ALICE);
+  assert.deepEqual(pending.map((x) => x.reason), ["done"]);
+  assert.ok(!landed(w, pending));
+  assert.ok(c.submit(ALICE, w.actions, w.payments));
+  assert.ok(landed(w, await explain(c.state, w, ALICE)));
+});
+
+test("a holder's own stale change is about the price, not 'already yours'", async () => {
+  const c = await show();
+  assert.ok(c.submit(ALICE, ...Object.values(write.buy(await seat(c, "berlin/A1"), ALICE))));
+  const mine = await seat(c, "berlin/A1");
+  assert.ok(c.submit(ALICE, [write.price(mine, 300n)]));
+  const stale = { actions: [write.price(mine, 400n)] };
+  assert.ok(!c.submit(ALICE, stale.actions));
+  assert.deepEqual(await reasons(c, stale, ALICE), ["price"]);
 });

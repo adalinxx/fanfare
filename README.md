@@ -12,7 +12,7 @@ client is the app.
 
 ```
 item/<artist>/<name>                        listing: {kind, title, venue, date, media, closed?}
-user/<artist>/answer/<id>        the artist's answer to a question
+user/<artist>/answer/<id>        {question, answer}: the artist's answer to the question it names
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
 index/checkin/<artist>/<id>/<staff>   ticket used at the door
 

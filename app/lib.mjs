@@ -14,7 +14,7 @@ export const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : m
 
 /**
  * `#/`, `#/a/<artist>`, `#/a/<artist>/<listing>`, `#/me`, `#/door/<artist>`,
- * `#/launch`.
+ * `#/door/<artist>/<listing>`, `#/launch`.
  */
 export function parseRoute(hash) {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map((part) => {
@@ -25,7 +25,7 @@ export function parseRoute(hash) {
     }
   });
   if (parts[0] === "a" && parts[1]) return { view: "artist", name: parts[1], ...(parts.length > 2 && { listing: parts.slice(2).join("/") }) };
-  if (parts[0] === "door" && parts[1]) return { view: "door", name: parts[1] };
+  if (parts[0] === "door" && parts[1]) return { view: "door", name: parts[1], ...(parts.length > 2 && { listing: parts.slice(2).join("/") }) };
   if (parts[0] === "me") return { view: "me" };
   if (parts[0] === "launch") return { view: "launch" };
   return { view: "home" };
@@ -67,14 +67,17 @@ export function newIds(name, existing, count) {
 /**
  * A listing's tickets as the page shows them: how many exist, how many fans
  * hold, and the ones for sale, cheapest first (the artist's and resales).
+ * `used` are ids already used up (checked in, or a slot already answered):
+ * they stay listed, marked, but don't count as the cheapest.
  */
-export function summary(listing, tickets) {
+export function summary(listing, tickets, used = new Set()) {
   const forSale = tickets.filter((t) => t.price !== undefined).sort((a, b) => (a.price < b.price ? -1 : a.price > b.price ? 1 : a.id < b.id ? -1 : 1));
   return {
     total: tickets.length,
     held: tickets.filter((t) => t.holder !== listing.artist).length,
     forSale,
-    cheapest: forSale[0]?.price,
+    cheapest: forSale.find((t) => !used.has(t.id))?.price,
+    used,
   };
 }
 

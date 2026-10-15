@@ -111,6 +111,9 @@ legend { font-size: 14px; font-weight: 600; padding: 0 4px; }
 .verdict p { margin: 4px 0 12px; }
 .verdict.good { background: var(--good-soft); color: var(--good); }
 .verdict.bad { background: var(--bad-soft); color: var(--bad); }
+.verdict.wait { background: var(--accent-soft); color: var(--accent-deep); }
+.shows { list-style: none; padding: 0; display: grid; gap: 8px; }
+.tag.used { background: var(--bad-soft); color: var(--bad); }
 .defaults { background: var(--bg); border-radius: 10px; padding: 12px 14px; }
 form.launch { display: flex; flex-direction: column; gap: 10px; max-width: 560px; }
 pre { white-space: pre-wrap; background: var(--bg); padding: 12px; border-radius: 10px; }
@@ -120,6 +123,8 @@ pre { white-space: pre-wrap; background: var(--bg); padding: 12px; border-radius
 dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); width: min(480px, calc(100% - 32px)); padding: 20px; }
 dialog::backdrop { background: rgb(0 0 0 / .35); }
 dialog form { display: flex; flex-direction: column; gap: 8px; }
+.links { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 14px; }
+@media (max-width: 420px) { #who .chip { display: none; } }
 @media (max-width: 600px) {
   header nav .wide { display: none; }
   .hero h1 { font-size: 32px; }
@@ -144,6 +149,8 @@ dialog form { display: flex; flex-direction: column; gap: 8px; }
     <p class="small muted">Fanfare reads every record from this node and checks it by its hash, so the node can withhold but not forge. Your wallet sends writes through its own node.</p>
     <label for="s-home">Home chain</label><input id="s-home" name="home" class="mono">
     <label for="s-profile">Profile chain (Moniker)</label><input id="s-profile" name="profile" class="mono">
+    <label for="s-origins">Other Fanfare sites this door accepts passes from</label><input id="s-origins" name="origins" class="mono" placeholder="https://fanfare.example">
+    <p class="small muted">A pass is signed for the site it was made on. This site is always accepted.</p>
     <div class="acts"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Cancel</button></div>
   </form>
 </dialog>

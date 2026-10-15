@@ -78,8 +78,12 @@ export const mint = (artist, id, { to = artist, price } = {}) => [
 /** The artist trusts `staff` to check tickets in, or stops with `trusted` false. */
 export const staff = (artist, s, trusted = true) => [[`user/${artist}/staff/${s}`, trusted ? "1" : undefined]];
 
-/** The artist's answer to the question on ticket `id`. */
-export const answer = (artist, id, text) => [[`user/${artist}/answer/${id}`, text]];
+/**
+ * The artist's answer to `question`, asked on ticket `id`. The answer names
+ * the question, so if the slot is sold on and asks something new, the old
+ * answer doesn't count for it.
+ */
+export const answer = (artist, id, question, text) => [[`user/${artist}/answer/${id}`, json({ question, answer: text })]];
 
 // Fan.
 

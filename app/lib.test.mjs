@@ -34,6 +34,8 @@ test("a listing's summary: held by fans, for sale cheapest first", () => {
     { id: "x/3", holder: "fan2" },
   ]);
   assert.deepEqual([s.total, s.held, s.cheapest, s.forSale.map((t) => t.id)], [3, 2, 200n, ["x/2", "x/1"]]);
+  // A used ticket stays listed but isn't the cheapest.
+  assert.equal(summary(listing, [{ id: "x/1", holder: "a", price: 250n }, { id: "x/2", holder: "fan", price: 200n }], new Set(["x/2"])).cheapest, 250n);
 });
 
 test("wallet errors said plainly", () => {
