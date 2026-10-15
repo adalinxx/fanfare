@@ -1,11 +1,13 @@
 // The door check. The scanner reads the ticket's holder from state, shows a
-// fresh challenge, and the fan's wallet signs it with the holder's key. A
-// screenshot of someone else's ticket can't answer a challenge it has not
-// seen. Staff then write the check-in (write.mjs `checkin`).
+// fresh challenge, and the fan's Lattice wallet signs it (`signMessage`) with
+// the holder's key. A screenshot of someone else's ticket can't answer a
+// challenge it has not seen. Staff then write the check-in (write.mjs
+// `checkin`).
 //
-// The signature uses the wallet's one signing domain, which transactions
-// share. A transaction's signed text starts `domain:`; a challenge starts
-// `fanfare-door`, so neither can be passed off as the other.
+// The wallet signs "lattice-message:" + the asking page's origin + "\n" +
+// the text. A transaction's signed bytes start with another prefix, so a
+// challenge can't be passed off as a transaction, and with the origin inside,
+// an answer given to another site does not verify here.
 
 /** A one-time challenge for ticket `id` of `artist`. */
 export function challenge(artist, id) {
@@ -13,17 +15,21 @@ export function challenge(artist, id) {
   return `fanfare-door\nartist:${artist}\nticket:${id}\nnonce:${nonce}`;
 }
 
-/** The fan's answer: `{ publicKey, signature }`, both hex. */
-export const prove = (sdk, text, privateKey) => ({
-  publicKey: sdk.bytesToHex(sdk.publicKeyFromPrivate(privateKey)),
-  signature: sdk.signPreimage(text, privateKey),
-});
+/** The bytes a wallet signs for `text` asked by a page at `origin`. */
+export const signedBytes = (origin, text) => new TextEncoder().encode(`lattice-message:${origin}\n${text}`);
 
-/** Whether `proof` answers `text` with the key of `ticket`'s holder. */
-export function verify(sdk, text, proof, ticket) {
+/** The fan's answer from their wallet (`window.lattice`): `{ publicKey, signature }`, both hex. */
+export const prove = (lattice, text) => lattice.signMessage({ text });
+
+/**
+ * Whether `proof` answers `text`, asked by Fanfare at `origin`, with the key
+ * of `ticket`'s holder.
+ */
+export async function verify(sdk, origin, text, proof, ticket) {
   try {
-    const publicKey = sdk.hexToBytes(proof.publicKey);
-    return sdk.addressFromPublicKey(publicKey) === ticket.holder && sdk.verifyPreimage(text, proof.signature, publicKey);
+    if (sdk.addressFromMultikey(proof.publicKey) !== ticket.holder) return false;
+    const key = await crypto.subtle.importKey("raw", sdk.decodeEd25519Multikey(proof.publicKey), "Ed25519", false, ["verify"]);
+    return await crypto.subtle.verify("Ed25519", key, sdk.hexToBytes(proof.signature), signedBytes(origin, text));
   } catch {
     return false;
   }

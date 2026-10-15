@@ -83,7 +83,13 @@ pays the premine to `--premine-to`. Names are first come.
   transfers, questions, answers, staff and check-ins. A ticket change names
   the value the writer read, so a stale view is refused, never misapplied.
 - `launch.mjs` is the default spec, its premine and the create command.
-- `door.mjs` is the door check: a one-time challenge the holder's key signs.
+- `wallet.mjs` turns a write into a request for the Lattice wallet
+  (`window.lattice.writeRecords`): Fanfare keeps no key, and the wallet
+  shows, signs and sends every write, payments included.
+- `market.mjs` lists the offers for an artist's coin and writes the wallet's
+  `lattice://order` requests to sell or take them.
+- `door.mjs` is the door check: a one-time challenge the holder's wallet
+  signs (`signMessage`), bound to Fanfare's origin.
 
 The client tests run every transaction they build through the built policy
 before applying it:

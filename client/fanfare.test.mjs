@@ -7,11 +7,28 @@ import { context, validate } from "../policy/test/host.mjs";
 import * as door from "./door.mjs";
 import * as launch from "./launch.mjs";
 import * as read from "./read.mjs";
+import * as wallet from "./wallet.mjs";
 import * as write from "./write.mjs";
 
 const sdk = await import(process.env.LATTICE_SDK);
 const PATH = ["Nexus", "fanfare", "band"];
 const [ARTIST, ALICE, BOB, CAROL, STAFF] = ["artist", "alice", "bob", "carol", "staff"];
+
+/**
+ * A stand-in for `window.lattice` on a page at `origin`: signs as the wallet
+ * does, "lattice-message:" + origin + "\n" + text, with `who`'s key.
+ */
+function walletOf(who, origin) {
+  // An Ed25519 seed as PKCS#8, the form WebCrypto imports.
+  const pkcs8 = new Uint8Array([...sdk.hexToBytes("302e020100300506032b657004220420"), ...who.privateKey]);
+  return {
+    async signMessage({ text }) {
+      const key = await crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"]);
+      const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", key, door.signedBytes(origin, text)));
+      return { publicKey: who.publicKey, signature: sdk.bytesToHex(signature) };
+    },
+  };
+}
 
 /**
  * A chain in memory that admits a transaction the way consensus would: every
@@ -129,6 +146,21 @@ test("one transaction buys several tickets from one holder", async () => {
   assert.ok(!d.submit(BOB, again.flatMap((t) => write.buy(t, BOB).actions), [{ to: ARTIST, amount: 250n }]));
 });
 
+test("the wallet request pays each holder once, the same body the chain admits", async () => {
+  const c = await show();
+  const tickets = (await read.tickets(c.state, ARTIST, "berlin")).filter((t) => t.price !== undefined);
+  const buys = tickets.map((t) => write.buy(t, BOB));
+  const request = wallet.writeRequest(PATH, { actions: buys.flatMap((b) => b.actions), payments: buys.flatMap((b) => b.payments) });
+  assert.deepEqual(request.payments, [{ to: ARTIST, amount: "750" }]);
+  assert.equal(request.fee, "1");
+  assert.deepEqual(request.chainPath, PATH);
+  assert.equal(wallet.writeRequest(PATH, { actions: request.actions }).payments, undefined);
+  assert.throws(() => wallet.writeRequest(PATH, { actions: [] }));
+  let asked;
+  assert.deepEqual(await wallet.send({ writeRecords: async (r) => ((asked = r), { transactionCID: "bafy…" }) }, PATH, buys[0]), { transactionCID: "bafy…" });
+  assert.deepEqual(asked.payments, [{ to: ARTIST, amount: "250" }]);
+});
+
 test("a holder resells at their own price, transfers, and the artist can't take it back", async () => {
   const c = await show();
   assert.ok(c.submit(ALICE, ...Object.values(write.buy(await read.ticket(c.state, ARTIST, "berlin/A1"), ALICE))));
@@ -196,12 +228,17 @@ test("the door: the holder answers a challenge and trusted staff check in", asyn
   assert.ok(c.submit(CAROL, [write.transfer(await read.ticket(c.state, ARTIST, "berlin/guest"), fan.address)]));
   const ticket = await read.ticket(c.state, ARTIST, "berlin/guest");
 
+  const ORIGIN = "https://fanfare.example";
   const text = door.challenge(ARTIST, ticket.id);
-  assert.ok(door.verify(sdk, text, door.prove(sdk, text, fan.privateKey), ticket));
-  assert.ok(!door.verify(sdk, text, door.prove(sdk, text, other.privateKey), ticket), "not the holder");
-  const old = door.prove(sdk, door.challenge(ARTIST, ticket.id), fan.privateKey);
-  assert.ok(!door.verify(sdk, text, old, ticket), "an answer to another challenge");
-  assert.ok(!door.verify(sdk, text, { publicKey: "zz", signature: "00" }, ticket));
+  const answer = (who, origin = ORIGIN) => door.prove(walletOf(who, origin), text);
+  assert.ok(await door.verify(sdk, ORIGIN, text, await answer(fan), ticket));
+  assert.ok(!(await door.verify(sdk, ORIGIN, text, await answer(other), ticket)), "not the holder");
+  assert.ok(!(await door.verify(sdk, ORIGIN, text, await answer(fan, "https://other.example"), ticket)), "asked by another site");
+  const old = await door.prove(walletOf(fan, ORIGIN), door.challenge(ARTIST, ticket.id));
+  assert.ok(!(await door.verify(sdk, ORIGIN, text, old, ticket)), "an answer to another challenge");
+  const transactionSignature = { publicKey: fan.publicKey, signature: sdk.signPreimage(text, fan.privateKey) };
+  assert.ok(!(await door.verify(sdk, ORIGIN, text, transactionSignature, ticket)), "a transaction-domain signature");
+  assert.ok(!(await door.verify(sdk, ORIGIN, text, { publicKey: "zz", signature: "00" }, ticket)));
 
   assert.ok(await c.write(ARTIST, write.staff(ARTIST, STAFF)));
   assert.ok(await c.write(STAFF, write.checkin(STAFF, ARTIST, ticket.id)));
