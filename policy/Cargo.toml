@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[dependencies]
+lattice-policy-rules = { path = "../../lattice-profile/rules" }
+
 [profile.release]
 opt-level = "z"
 lto = true

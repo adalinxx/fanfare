@@ -25,78 +25,35 @@
 //! price, and an empty one means the token does not exist yet.
 //!
 //! What the records mean is up to clients. Coin actions pass untouched.
+//!
+//! The context reading and the token rule are `lattice-policy-rules`, shared
+//! with the profile chain's policy.
 #![cfg_attr(not(test), no_std)]
 
-const MAGIC: &[u8] = b"LWPCTX";
-const CONTEXT_ENCODING_VERSION: u16 = 2;
-/// Magic, encoding version, ABI version, scope, height, timestamp.
-const HEADER_BYTES: usize = 6 + 2 + 2 + 1 + 8 + 8;
+use lattice_policy_rules::{transaction_body, Action, Body};
+
+lattice_policy_rules::lattice_policy_abi!(crate::validate);
 
 /// The verdict for one policy context. Anything malformed is a rejection.
 pub fn validate(context: &[u8]) -> bool {
     transaction_body(context).and_then(check_body).is_some()
 }
 
-fn transaction_body(context: &[u8]) -> Option<&[u8]> {
-    if context.get(..MAGIC.len())? != MAGIC {
-        return None;
-    }
-    if u16::from_be_bytes(context.get(6..8)?.try_into().ok()?) != CONTEXT_ENCODING_VERSION {
-        return None;
-    }
-    let mut at = HEADER_BYTES;
-    let (_spec, next) = length_prefixed(context, at)?;
-    at = next;
-    let path_items = u32_at(context, at)?;
-    at += 4;
-    for _ in 0..path_items {
-        at = length_prefixed(context, at)?.1;
-    }
-    if *context.get(at)? != 1 {
-        return None;
-    }
-    Some(length_prefixed(context, at + 1)?.0)
-}
-
-fn check_body(body: &[u8]) -> Option<()> {
-    if skip(body, 0)? != body.len() {
-        return None;
-    }
-    let signers = map_value(body, 0, b"signers")?;
-    let actions = map_value(body, 0, b"actions")?;
-    let credits = map_value(body, 0, b"accountActions")?;
-    for action in Actions::new(body, actions)? {
+fn check_body(bytes: &[u8]) -> Option<()> {
+    let body = Body::parse(bytes)?;
+    for action in body.actions()? {
         let action = action?;
         match token(action.key)? {
-            Some(token) => check_token(body, signers, &action, &token)?,
-            None => check_owned(body, signers, &action)?,
+            // Only the seller mints, so every token is backed by its seller.
+            Some(token) => body.check_token_write(&action, |_| body.is_signer(token.seller))?,
+            None => check_owned(&body, &action)?,
         }
     }
-    // Each holder is paid for every token taken from them. The check runs once
-    // per holder, at the first token taken from them.
-    for (index, action) in Actions::new(body, actions)?.enumerate() {
-        let Some((holder, _)) = purchase(body, signers, &action?)? else {
-            continue;
-        };
-        let mut seen = false;
-        let mut owed: u128 = 0;
-        for (other, action) in Actions::new(body, actions)?.enumerate() {
-            match purchase(body, signers, &action?)? {
-                Some((payee, price)) if payee == holder => {
-                    seen |= other < index;
-                    owed = owed.checked_add(price as u128)?;
-                }
-                _ => {}
-            }
-        }
-        if !seen && credited(body, credits, holder)? < owed {
-            return None;
-        }
-    }
-    Some(())
+    // Every key reaching here passed `token`, so `own/` names a token.
+    body.check_payments(|key| key.starts_with(b"own/"))
 }
 
-fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
+fn check_owned(body: &Body, action: &Action) -> Option<()> {
     let mut segments = action.key.split(|&byte| byte == b'/');
     let owner = match segments.next()? {
         b"user" => segments.next()?,
@@ -115,24 +72,7 @@ fn check_owned(body: &[u8], signers: usize, action: &Action) -> Option<()> {
         }
         _ => return None,
     };
-    is_signer(body, signers, owner)
-}
-
-fn check_token(body: &[u8], signers: usize, action: &Action, token: &Token) -> Option<()> {
-    // Every write leaves a holder; a token is never deleted.
-    holding(action.new_value?)?;
-    match action.old_value {
-        None => is_signer(body, signers, token.seller),
-        Some(old) => {
-            let (holder, price) = holding(old)?;
-            if is_signer(body, signers, holder).is_some() {
-                return Some(());
-            }
-            // Taken by someone else: allowed only at a price, and paid for in
-            // `check_body`.
-            price.map(|_| ())
-        }
-    }
+    body.is_signer(owner)
 }
 
 struct Token<'a> {
@@ -161,273 +101,4 @@ fn named<'a>(segments: &mut impl Iterator<Item = &'a [u8]>) -> Option<&'a [u8]> 
         count += 1;
     }
     (count > 0).then_some(owner)
-}
-
-/// A token value's holder and asking price: `<holder>` or `<holder>@<price>`.
-fn holding(value: &[u8]) -> Option<(&[u8], Option<u64>)> {
-    let mut parts = value.splitn(2, |&byte| byte == b'@');
-    let holder = parts.next().filter(|holder| !holder.is_empty())?;
-    match parts.next() {
-        None => Some((holder, None)),
-        Some(price) => Some((holder, Some(decimal(price)?))),
-    }
-}
-
-/// The holder a token is taken from and the price owed to them, if the action
-/// takes a token without the holder's signature. Run only on actions that
-/// have already passed `check_body`'s first loop.
-fn purchase<'a>(body: &[u8], signers: usize, action: &Action<'a>) -> Option<Option<(&'a [u8], u64)>> {
-    let (Some(old), Some(_)) = (action.old_value, token(action.key)?) else {
-        return Some(None);
-    };
-    let (holder, price) = holding(old)?;
-    if is_signer(body, signers, holder).is_some() {
-        return Some(None);
-    }
-    Some(Some((holder, price?)))
-}
-
-/// A canonical unsigned decimal: digits only, no leading zero, fits in u64.
-/// Canonical so that one price cannot be spelled two ways.
-fn decimal(digits: &[u8]) -> Option<u64> {
-    if digits.is_empty() || (digits.len() > 1 && digits[0] == b'0') {
-        return None;
-    }
-    digits.iter().try_fold(0u64, |value, &digit| {
-        if !digit.is_ascii_digit() {
-            return None;
-        }
-        value.checked_mul(10)?.checked_add((digit - b'0') as u64)
-    })
-}
-
-/// The sum of the credits to `owner` in the transaction's account actions.
-fn credited(body: &[u8], account_actions: usize, owner: &[u8]) -> Option<u128> {
-    let (major, count, mut at) = head(body, account_actions)?;
-    if major != ARRAY {
-        return None;
-    }
-    let mut total: u128 = 0;
-    for _ in 0..count {
-        if text(body, map_value(body, at, b"owner")?)? == owner {
-            let (sign, amount, _) = head(body, map_value(body, at, b"delta")?)?;
-            if sign == UNSIGNED {
-                total = total.checked_add(amount as u128)?;
-            }
-        }
-        at = skip(body, at)?;
-    }
-    Some(total)
-}
-
-struct Action<'a> {
-    key: &'a [u8],
-    old_value: Option<&'a [u8]>,
-    new_value: Option<&'a [u8]>,
-}
-
-/// The actions array, read one action at a time. A malformed action ends the
-/// walk with a rejection.
-struct Actions<'a> {
-    body: &'a [u8],
-    at: usize,
-    remaining: u64,
-}
-
-impl<'a> Actions<'a> {
-    fn new(body: &'a [u8], actions: usize) -> Option<Self> {
-        let (major, remaining, at) = head(body, actions)?;
-        (major == ARRAY).then_some(Actions { body, at, remaining })
-    }
-}
-
-impl<'a> Iterator for Actions<'a> {
-    type Item = Option<Action<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        self.remaining -= 1;
-        let (body, at) = (self.body, self.at);
-        let action = (|| {
-            let action = Action {
-                key: text(body, map_value(body, at, b"key")?)?,
-                old_value: optional_text(body, at, b"oldValue")?,
-                new_value: optional_text(body, at, b"newValue")?,
-            };
-            self.at = skip(body, at)?;
-            Some(action)
-        })();
-        if action.is_none() {
-            self.remaining = 0;
-        }
-        Some(action)
-    }
-}
-
-fn is_signer(body: &[u8], signers: usize, owner: &[u8]) -> Option<()> {
-    let (major, count, mut at) = head(body, signers)?;
-    if major != ARRAY {
-        return None;
-    }
-    for _ in 0..count {
-        if text(body, at)? == owner {
-            return Some(());
-        }
-        at = skip(body, at)?;
-    }
-    None
-}
-
-fn u32_at(bytes: &[u8], at: usize) -> Option<usize> {
-    let raw = bytes.get(at..at.checked_add(4)?)?;
-    Some(u32::from_be_bytes(raw.try_into().ok()?) as usize)
-}
-
-fn length_prefixed(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
-    let start = at.checked_add(4)?;
-    let end = start.checked_add(u32_at(bytes, at)?)?;
-    Some((bytes.get(start..end)?, end))
-}
-
-// DAG-CBOR: definite lengths only, text-keyed maps.
-
-const UNSIGNED: u8 = 0;
-const BYTES: u8 = 2;
-const TEXT: u8 = 3;
-const ARRAY: u8 = 4;
-const MAP: u8 = 5;
-const TAG: u8 = 6;
-/// The DAG-CBOR `null`.
-const NULL: u8 = 0xf6;
-
-/// The item head at `at`: `(major type, argument, offset after the head)`.
-fn head(bytes: &[u8], at: usize) -> Option<(u8, u64, usize)> {
-    let first = *bytes.get(at)?;
-    let width = match first & 0x1f {
-        small @ 0..=23 => return Some((first >> 5, small as u64, at + 1)),
-        24 => 1,
-        25 => 2,
-        26 => 4,
-        27 => 8,
-        _ => return None,
-    };
-    let end = (at + 1).checked_add(width)?;
-    let argument = bytes
-        .get(at + 1..end)?
-        .iter()
-        .fold(0u64, |value, &byte| (value << 8) | byte as u64);
-    Some((first >> 5, argument, end))
-}
-
-/// The offset just past the item at `at`.
-fn skip(bytes: &[u8], mut at: usize) -> Option<usize> {
-    let mut pending: u64 = 1;
-    while pending > 0 {
-        let (major, argument, next) = head(bytes, at)?;
-        at = next;
-        pending -= 1;
-        match major {
-            BYTES | TEXT => {
-                at = at.checked_add(usize::try_from(argument).ok()?)?;
-                if at > bytes.len() {
-                    return None;
-                }
-            }
-            ARRAY => pending = pending.checked_add(argument)?,
-            MAP => pending = pending.checked_add(argument.checked_mul(2)?)?,
-            TAG => pending += 1,
-            _ => {}
-        }
-    }
-    Some(at)
-}
-
-/// The offset of the value stored under `key` in the map at `at`.
-fn map_value(bytes: &[u8], at: usize, key: &[u8]) -> Option<usize> {
-    let (major, pairs, mut next) = head(bytes, at)?;
-    if major != MAP {
-        return None;
-    }
-    for _ in 0..pairs {
-        let name = text(bytes, next)?;
-        let value = skip(bytes, next)?;
-        if name == key {
-            return Some(value);
-        }
-        next = skip(bytes, value)?;
-    }
-    None
-}
-
-/// The text stored under `key` in the map at `at`, where an absent key and a
-/// `null` both mean no value.
-fn optional_text<'a>(bytes: &'a [u8], at: usize, key: &[u8]) -> Option<Option<&'a [u8]>> {
-    let (major, pairs, mut next) = head(bytes, at)?;
-    if major != MAP {
-        return None;
-    }
-    for _ in 0..pairs {
-        let name = text(bytes, next)?;
-        let value = skip(bytes, next)?;
-        if name == key {
-            return match *bytes.get(value)? {
-                NULL => Some(None),
-                _ => Some(Some(text(bytes, value)?)),
-            };
-        }
-        next = skip(bytes, value)?;
-    }
-    Some(None)
-}
-
-fn text(bytes: &[u8], at: usize) -> Option<&[u8]> {
-    let (major, length, start) = head(bytes, at)?;
-    if major != TEXT {
-        return None;
-    }
-    bytes.get(start..start.checked_add(usize::try_from(length).ok()?)?)
-}
-
-#[cfg(target_arch = "wasm32")]
-mod abi {
-    use core::arch::wasm32::{memory_grow, memory_size, unreachable};
-
-    const PAGE_BYTES: usize = 65536;
-
-    extern "C" {
-        static __heap_base: u8;
-    }
-
-    /// The host calls this once per evaluation, on a fresh instance, so the
-    /// allocation is simply the memory above the module's own data.
-    #[no_mangle]
-    pub extern "C" fn lattice_alloc(length: i32) -> i32 {
-        let base = unsafe { &__heap_base as *const u8 as usize };
-        let Some(end) = usize::try_from(length).ok().and_then(|length| base.checked_add(length))
-        else {
-            return -1;
-        };
-        let have = memory_size(0) * PAGE_BYTES;
-        if end > have && memory_grow(0, (end - have).div_ceil(PAGE_BYTES)) == usize::MAX {
-            return -1;
-        }
-        base as i32
-    }
-
-    #[no_mangle]
-    pub extern "C" fn lattice_validate_transaction(pointer: i32, length: i32) -> i32 {
-        if pointer < 0 || length < 0 {
-            return 0;
-        }
-        let context =
-            unsafe { core::slice::from_raw_parts(pointer as usize as *const u8, length as usize) };
-        super::validate(context) as i32
-    }
-
-    #[panic_handler]
-    fn panic(_: &core::panic::PanicInfo) -> ! {
-        unreachable()
-    }
 }
