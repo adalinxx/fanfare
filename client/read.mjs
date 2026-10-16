@@ -80,6 +80,18 @@ export async function tickets(state, artist, name) {
   return [...(one ? [one] : []), ...many];
 }
 
+/** Every ticket on the chain, by any artist, that `fan` holds. One scan of `own/`. */
+export async function heldAll(state, fan) {
+  const found = [];
+  for await (const [key, value] of state.list("own/")) {
+    const rest = key.slice("own/".length);
+    const cut = rest.indexOf("/");
+    const ticket = cut > 0 ? asTicket(rest.slice(0, cut), rest.slice(cut + 1), value) : undefined;
+    if (ticket?.holder === fan) found.push(ticket);
+  }
+  return found;
+}
+
 /** Every ticket of `artist` that `fan` holds. One scan of the artist's tickets. */
 export async function held(state, artist, fan) {
   return (await ticketsUnder(state, artist, "")).filter((ticket) => ticket.holder === fan);
@@ -101,6 +113,10 @@ const asListing = (artist, name, value) => {
     ...text("venue"),
     ...text("date"),
     ...text("media"),
+    // The artist's own price for its tickets, so a resale can show what it cost first.
+    ...(typeof record.price === "string" && /^[1-9][0-9]{0,18}$/.test(record.price) && { price: BigInt(record.price) }),
+    // How many days the artist promises to answer a Q&A slot's question in.
+    ...(Number.isSafeInteger(record.answerWithin) && record.answerWithin > 0 && { answerWithin: record.answerWithin }),
     closed: record.closed === true,
   };
 };
@@ -108,6 +124,20 @@ const asListing = (artist, name, value) => {
 /** Listing `name` of `artist`, or undefined. */
 export const listing = async (state, artist, name) =>
   asListing(artist, name, await state.get(`item/${artist}/${name}`));
+
+/**
+ * Every listing on the chain, by every artist: `item/<artist>/<name>`. On the
+ * shared Fanfare chain this is how the page finds who sells there.
+ */
+export async function allListings(state) {
+  return (await collect(state.list("item/")))
+    .map(([key, value]) => {
+      const rest = key.slice("item/".length);
+      const cut = rest.indexOf("/");
+      return cut > 0 ? asListing(rest.slice(0, cut), rest.slice(cut + 1), value) : undefined;
+    })
+    .filter(Boolean);
+}
 
 /** Every listing of `artist`, in name order. */
 export async function listings(state, artist) {
@@ -136,27 +166,40 @@ export async function checkins(state, artist, id) {
 }
 
 /**
+ * A question as its holder wrote it (write.mjs `question`): `{ text, at? }`,
+ * `at` the asker's clock in Unix milliseconds. The asker sets `at`, so it
+ * says when they say they asked; a plain-text value is a question with no time.
+ */
+export function asked(value) {
+  if (typeof value !== "string") return undefined;
+  const record = parse(value);
+  if (isObject(record) && typeof record.text === "string")
+    return { text: record.text, ...(Number.isSafeInteger(record.at) && record.at > 0 && { at: record.at }) };
+  return { text: value };
+}
+
+/**
  * The questions on a Q&A listing: for each slot whose holder asked one,
- * `{ ticket, text, answer? }`. A question counts only from the slot's
+ * `{ ticket, value, text, at?, answer? }`, `value` the record as stored. A question counts only from the slot's
  * current holder, so a slot sold on carries its new holder's question. An
  * answer names the question it answers (write.mjs `answer`), so it counts
  * only while the slot still asks that question.
  */
 export async function questions(state, artist, name) {
   const slots = await tickets(state, artist, name);
-  const asked = await Promise.all(
+  const found = await Promise.all(
     slots.map(async (slot) => {
-      const [text, answered] = await Promise.all([
+      const [value, answered] = await Promise.all([
         state.get(`user/${slot.holder}/question/${artist}/${slot.id}`),
         state.get(`user/${artist}/answer/${slot.id}`),
       ]);
-      if (text === undefined) return undefined;
+      if (value === undefined) return undefined;
       const record = parse(answered);
-      const answer = isObject(record) && record.question === text && typeof record.answer === "string" ? record.answer : undefined;
-      return { ticket: slot, text, ...(answer !== undefined && { answer }) };
+      const answer = isObject(record) && record.question === value && typeof record.answer === "string" ? record.answer : undefined;
+      return { ticket: slot, value, ...asked(value), ...(answer !== undefined && { answer }) };
     }),
   );
-  return asked.filter(Boolean);
+  return found.filter(Boolean);
 }
 
 /**
@@ -190,4 +233,10 @@ export async function shipments(state, artist, name) {
     }),
   );
   return found.filter(Boolean);
+}
+
+/** The merch items of `artist` the artist marked shipped (write.mjs `shipped`), as a set of ids. */
+export async function shipped(state, artist) {
+  const prefix = `user/${artist}/shipped/`;
+  return new Set((await collect(state.list(prefix))).map(([key]) => key.slice(prefix.length)));
 }

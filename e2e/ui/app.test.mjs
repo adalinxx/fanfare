@@ -1,6 +1,7 @@
 // The page (`app/`) in headless Chromium against a private Lattice stack: one
-// node mines Nexus, the shared profile chain, the Fanfare home chain and one
-// artist chain, each launched with its premine to the artist. Each person
+// node mines Nexus, the shared profile chain, the Fanfare chain (where the
+// artist sells from their wallet) and one artist's own coin chain, each
+// launched with its premine to the artist. Each person
 // has their own browser context with a stand-in for the Lattice wallet's
 // `window.lattice` that signs with their key the way the wallet does (the
 // transaction body write.mjs builds, checked against the wallet's own code,
@@ -27,6 +28,7 @@ import * as write from "../../client/write.mjs";
 const sdk = await import(process.env.LATTICE_SDK);
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 const PROFILE_DIR = process.env.MONIKER;
+const HOME = launch.HOME;
 const CHAIN = launch.chainPath("band");
 const PROFILE = ["Nexus", "moniker"];
 const [listen, rpc, publicRead, appPort] = [25041, 29390, 29391, 8771];
@@ -61,7 +63,7 @@ async function api(path, chain) {
   const response = await fetch(url, { cache: "no-store" });
   return response.ok ? response.json() : undefined;
 }
-const balance = async (who, chain = CHAIN) => BigInt((await api(`/api/state/account/${who.address}`, chain))?.balance ?? 0);
+const balance = async (who, chain = HOME) => BigInt((await api(`/api/state/account/${who.address}`, chain))?.balance ?? 0);
 
 /** What the wallet does with a writeRecords request: nonce from its node, the body, the signature, the send. */
 async function send(who, request) {
@@ -158,18 +160,21 @@ before(async () => {
   });
   lattice("child", "create", PROFILE.join("/"), "--spec", `${PROFILE_DIR}/chain/spec.json`,
     "--policy-module", `${PROFILE_DIR}/chain/moniker_policy.wasm`, "--premine-to", artist.address);
-  lattice("child", "create", launch.HOME.join("/"));
-  const specFile = `${root}/band.json`;
+  // The Fanfare chain runs the Fanfare policy, as the trial does.
+  const specFile = `${root}/spec.json`;
   writeFileSync(specFile, JSON.stringify(launch.spec()));
-  lattice(...launch.createArguments({ name: "band", specFile, moduleFile: here("../../app/fanfare_policy.wasm"), artist: artist.address }));
+  const policy = here("../../app/fanfare_policy.wasm");
+  lattice("child", "create", HOME.join("/"), "--spec", specFile, "--policy-module", policy, "--premine-to", artist.address);
+  lattice(...launch.createArguments({ name: "band", specFile, moduleFile: policy, artist: artist.address }));
   configure((topology) => {
-    topology.mine.recipients = Object.fromEntries([launch.HOME, CHAIN, PROFILE].map((c) => [c.join("/"), miner.address]));
+    topology.mine.recipients = Object.fromEntries([HOME, CHAIN, PROFILE].map((c) => [c.join("/"), miner.address]));
   });
   lattice("up");
   lattice("mine", "start");
-  await until("both premines", async () => (await balance(artist)) > 0n && (await balance(artist, PROFILE)) > 0n);
-  // Fans get coin from the artist; the market's legs are the wallet's.
-  assert.ok((await send(artist, wallet.writeRequest(CHAIN, { actions: [{ key: `user/${artist.address}/hello`, newValue: "1" }], payments: [{ to: alice.address, amount: 2000n }, { to: bob.address, amount: 2000n }] }))).ok);
+  await until("the premines", async () => (await balance(artist)) > 0n && (await balance(artist, CHAIN)) > 0n && (await balance(artist, PROFILE)) > 0n);
+  // Fans get FAN from the artist; the market's legs are the wallet's.
+  const fund = (chain) => send(artist, wallet.writeRequest(chain, { actions: [{ key: `user/${artist.address}/hello`, newValue: chain.join("/") }], payments: [{ to: alice.address, amount: 2000n }, { to: bob.address, amount: 2000n }] }));
+  assert.ok((await fund(HOME)).ok);
   await until("fans funded", async () => (await balance(bob)) === 2000n);
   // The artist's card on Moniker: a name, a site that doesn't list them back, a link.
   const card = { name: "The Band", url: "https://band.invalid", links: [{ label: "Bandcamp", url: "https://band.invalid/music" }] };
@@ -190,157 +195,216 @@ after(async () => {
 
 let artistPage;
 let alicePage;
+const ME = () => `#/a/${encodeURIComponent(`@${artist.address}`)}`;
+const SHOW_DATE = "2030-11-14";
 
-test("the home page lists the artist by their Moniker name, their site not confirmed", async () => {
+test("an artist sells from their wallet: a show on sale in four fields", async () => {
   artistPage = await person(artist);
-  await visit(artistPage);
-  await artistPage.locator('[data-artist="band"]').filter({ hasText: "The Band" }).filter({ hasText: "band.invalid · not confirmed" }).waitFor();
-  await shot(artistPage, "1-home");
-  await artistPage.click('[data-artist="band"]');
-  await artistPage.locator("h1", { hasText: "The Band" }).waitFor();
-  await artistPage.locator(".links a", { hasText: "Bandcamp" }).waitFor();
-  assert.match(await artistPage.locator(".coin .big").textContent(), /^\d{2},\d{3},\d{3}$/);
-  assert.equal(await artistPage.locator(".note.warn").count(), 0, "the default spec runs the Fanfare policy");
-});
-
-test("the artist puts a show on sale from the page", async () => {
-  await artistPage.click('[data-act="new-listing"]');
+  await visit(artistPage, "#/sell");
+  await artistPage.locator("h1", { hasText: "Sell on Fanfare" }).waitFor();
   await artistPage.fill("#nl-title", "Berlin");
+  await artistPage.fill("#nl-date", SHOW_DATE);
   await artistPage.fill("#nl-venue", "Tresor");
   await artistPage.fill("#nl-count", "3");
   await artistPage.fill("#nl-price", "250");
-  await shot(artistPage, "2-new-listing");
+  await shot(artistPage, "2-sell");
   await artistPage.click('form[data-act="create-listing"] button[type=submit]');
   await status(artistPage, 'form[data-act="create-listing"]', "Done.");
-  await artistPage.locator("#l-berlin").filter({ hasText: "3 tickets" }).waitFor();
-  // The artist holds every new ticket: the page shows it on sale rather than offering to buy.
-  assert.equal(await artistPage.locator("#l-berlin .seats li", { hasText: "on sale" }).count(), 3);
-  await shot(artistPage, "3-on-sale");
+  await artistPage.locator('form[data-act="create-listing"] .after', { hasText: "On sale" }).waitFor();
+  await visit(artistPage, ME());
+  await artistPage.locator("#l-berlin", { hasText: "Sold 0 of 3 tickets" }).waitFor();
+  assert.equal(await artistPage.locator('#l-berlin [data-act="buy"]').count(), 0, "the artist isn't offered their own tickets");
+  await artistPage.locator(".tools", { hasText: "Show fans this is really you" }).waitFor();
+  await shot(artistPage, "3-artist-view");
 });
 
-test("a fan buys a ticket; a fan who saw it earlier is told it sold", async () => {
+test("the home page: what's coming up, and who sells, by their Moniker name", async () => {
   alicePage = await person(alice);
+  await visit(alicePage);
+  await alicePage.locator(".coming li", { hasText: "The Band" }).filter({ hasText: "14 Nov" }).waitFor();
+  const card = alicePage.locator(`[data-artist="@${artist.address}"]`);
+  await card.filter({ hasText: "The Band" }).waitFor();
+  await card.locator(".badge-slot").waitFor({ state: "attached" });
+  assert.equal(await card.locator(".verified").count(), 0, "a site that doesn't list the artist earns no check mark");
+  assert.equal(await alicePage.locator("text=not confirmed").count(), 0, "and no warning either");
+  await shot(alicePage, "1-home");
+  await alicePage.locator(".coming a").first().click();
+  await alicePage.locator("h1", { hasText: "The Band" }).waitFor();
+  await alicePage.locator(".links a", { hasText: "Bandcamp" }).waitFor();
+  assert.equal(await alicePage.locator(".coin").count(), 0, "no coin block for an artist selling in FAN");
+});
+
+test("one button buys a ticket, with the total shown first; a fan who saw it earlier is offered the next", async () => {
   const bobPage = await person(bob);
-  await Promise.all([visit(alicePage, "#/a/band"), visit(bobPage, "#/a/band")]);
-  await Promise.all([alicePage, bobPage].map((p) => p.locator('#l-berlin [data-ticket="berlin/1"]').waitFor()));
+  await Promise.all([visit(alicePage, ME()), visit(bobPage, ME())]);
+  await Promise.all([alicePage, bobPage].map((p) => p.locator('#l-berlin [data-act="buy"]', { hasText: "Buy ticket · 250 FAN" }).waitFor()));
+  await alicePage.locator("#l-berlin", { hasText: "3 left" }).waitFor();
 
-  await alicePage.click('#l-berlin [data-ticket="berlin/1"]');
-  await alicePage.click('form[data-act="confirm-buy"] button[type=submit]');
+  await alicePage.click('#l-berlin [data-act="buy"]');
+  const sheet = alicePage.locator('form[data-act="confirm-buy"]');
+  await sheet.locator(".total", { hasText: "251 FAN" }).waitFor();
+  await shot(alicePage, "4-buy");
+  await sheet.locator("button[type=submit]", { hasText: "Pay 251 FAN in wallet" }).click();
   await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
+  await sheet.locator(".after", { hasText: "It's yours" }).waitFor();
 
-  await bobPage.click('#l-berlin [data-ticket="berlin/1"]');
+  await bobPage.click('#l-berlin [data-act="buy"]');
   await bobPage.click('form[data-act="confirm-buy"] button[type=submit]');
   await status(bobPage, 'form[data-act="confirm-buy"]', "Someone else got this ticket first.");
-  await shot(bobPage, "4-sold-to-someone-else");
+  await bobPage.locator('form[data-act="confirm-buy"] .status', { hasText: "Nothing was taken from you" }).waitFor();
+  await shot(bobPage, "5-sold-to-someone-else");
+  await bobPage.click('[data-act="buy-next"]');
+  await bobPage.locator('form[data-act="confirm-buy"][data-ticket="berlin/2"]').waitFor();
   await bobPage.context().close();
 });
 
 let code;
-test("the fan's tickets: a pass for the door, and a resale price", async () => {
+test("my tickets: by show date, a door pass to keep, and a resale that shows the original price", async () => {
   await visit(alicePage, "#/me");
+  await alicePage.locator("h2", { hasText: "Upcoming shows" }).waitFor();
   const row = alicePage.locator('li[data-ticket="berlin/1"]');
-  await row.waitFor();
+  await row.filter({ hasText: "The Band" }).filter({ hasText: "14 Nov 2030" }).waitFor();
   await row.locator('[data-act="pass"]').click();
-  await row.locator(".pass svg").waitFor();
-  await shot(alicePage, "5-pass");
+  await row.locator(".pass > svg").waitFor();
+  await row.locator(".pass", { hasText: "until the ticket is checked in" }).waitFor();
+  await shot(alicePage, "6-pass");
   // The QR code holds what the wallet signed; the scanner gets the same text.
   const origin = `http://127.0.0.1:${appPort}`;
-  code = await door.pass({ signMessage: ({ text }) => signMessage(alice, origin, text) }, origin, artist.address, "berlin/1");
+  code = await door.pass({ signMessage: ({ text }) => signMessage(alice, origin, text) }, origin, HOME.join("/"), artist.address, "berlin/1");
+  // Signed once: it opens again without asking the wallet.
+  const signs = asked.filter((m) => m === "signMessage").length;
+  await visit(alicePage, "#/me");
+  await alicePage.locator('li[data-ticket="berlin/1"] [data-act="pass"]').click();
+  await alicePage.locator('li[data-ticket="berlin/1"] .pass > svg').waitFor();
+  assert.equal(asked.filter((m) => m === "signMessage").length, signs);
+  // The pass on its own page, as a phone opens it: no header, no wallet.
+  await visit(alicePage, `#/pass/${encodeURIComponent(code)}`);
+  await alicePage.locator(".pass.full svg").waitFor();
+  assert.ok(!(await alicePage.locator("header.top").isVisible()));
 
-  await row.locator('[data-act="resell"]').click();
-  await row.locator("#rp").fill("400");
-  await row.locator("button[type=submit]").click();
+  await visit(alicePage, "#/me");
+  const again = alicePage.locator('li[data-ticket="berlin/1"]');
+  await again.locator('[data-act="resell"]').click();
+  await again.locator(".form-slot", { hasText: "It cost 250 FAN new" }).waitFor();
+  await again.locator("#rp").fill("400");
+  await again.locator("button[type=submit]").click();
   await status(alicePage, 'form[data-act="resell-confirm"]', "Done.");
-  await alicePage.locator('li[data-ticket="berlin/1"] .tag', { hasText: "for sale at 400" }).waitFor({ timeout: 10_000 });
+  await alicePage.locator('li[data-ticket="berlin/1"] .tag', { hasText: "On sale at 400 FAN" }).waitFor({ timeout: 10_000 });
 });
 
 test("the door: pick the show, a good pass is checked in, and it works once", async () => {
-  await visit(artistPage, "#/door/band");
+  await visit(artistPage, `#/door/${encodeURIComponent(`@${artist.address}`)}`);
   await artistPage.locator("a.card", { hasText: "Berlin" }).click();
   await artistPage.locator("h1", { hasText: "Door · Berlin" }).waitFor();
   await artistPage.fill("#code", code);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
   await artistPage.locator(".verdict.good", { hasText: "Let them in" }).waitFor({ timeout: SECONDS * 1000 });
-  await shot(artistPage, "6-door-ok");
+  await shot(artistPage, "7-door-ok");
   // The same pass again at this door, then at a door that didn't see it.
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
   await artistPage.locator(".verdict.bad", { hasText: "already let in at this door" }).waitFor();
-  await visit(artistPage, "#/door/band/berlin");
-  await artistPage.fill("#code", code);
+  await visit(artistPage, `#/door/${encodeURIComponent(`@${artist.address}`)}/berlin`);
+  // A pass link, as a phone shows it, scans the same.
+  await artistPage.fill("#code", `http://127.0.0.1:${appPort}/app/#/pass/${encodeURIComponent(code)}`);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
   await artistPage.locator(".verdict.bad", { hasText: "already checked in" }).waitFor();
-  await shot(artistPage, "7-door-used");
 });
 
-test("a checked-in ticket Alice still sells is marked used, and a buyer is warned", async () => {
+test("a used ticket still on resale is marked, and a buyer is warned", async () => {
   const bobPage = await person(bob);
-  await visit(bobPage, "#/a/band");
-  const seat = bobPage.locator("#l-berlin .seats li", { hasText: "resale" });
-  await seat.locator(".tag.used").waitFor();
+  await visit(bobPage, ME());
+  const resales = bobPage.locator("#l-berlin details.resales");
+  await resales.locator("summary").click();
+  const seat = resales.locator(".seats li", { hasText: "400 FAN" });
+  await seat.filter({ hasText: "+60% on 250" }).locator(".tag.used").waitFor();
   await seat.locator('[data-act="buy"]').click();
   await bobPage.locator('form[data-act="confirm-buy"] .warn-text', { hasText: "already checked in" }).waitFor();
-  await shot(bobPage, "7b-used-warning");
+  await bobPage.locator('form[data-act="confirm-buy"]', { hasText: "originally 250 FAN" }).waitFor();
+  await shot(bobPage, "8-used-warning");
   await bobPage.context().close();
 });
 
-test("Q&A: a fan buys a slot and asks; the artist answers", async () => {
-  await visit(artistPage, "#/a/band");
-  await artistPage.click('[data-act="new-listing"]');
+test("paid questions: the answer window shown before buying; the artist sees it to do and answers", async () => {
+  await visit(artistPage, ME());
+  await artistPage.click('.head-acts [data-act="new-listing"]');
   await artistPage.check('input[name=kind][value=qa]');
+  await artistPage.locator("#nl-days").waitFor();
   await artistPage.fill("#nl-title", "Ask me anything");
   await artistPage.fill("#nl-count", "2");
   await artistPage.fill("#nl-price", "50");
+  await artistPage.fill("#nl-days", "3");
   await artistPage.click('form[data-act="create-listing"] button[type=submit]');
   await status(artistPage, 'form[data-act="create-listing"]', "Done.");
 
-  await visit(alicePage, "#/a/band");
-  await alicePage.click('#l-ask-me-anything [data-ticket="ask-me-anything/1"]');
+  await visit(alicePage, ME());
+  await alicePage.locator("#l-ask-me-anything .promise", { hasText: "within 3 days" }).filter({ hasText: "no refund" }).waitFor();
+  await alicePage.click('#l-ask-me-anything [data-act="buy"]');
   await alicePage.fill("#ask", "What's the next album called?");
   await alicePage.click('form[data-act="confirm-buy"] button[type=submit]');
   await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
 
-  await visit(artistPage, "#/a/band");
+  await visit(artistPage, ME());
+  await artistPage.locator(".todo", { hasText: "1 question to answer" }).waitFor({ timeout: 30_000 });
   const form = artistPage.locator('form[data-act="answer"]');
-  await form.waitFor({ timeout: 30_000 });
+  await form.filter({ hasText: "asked today" }).waitFor();
   await form.locator("textarea").fill("Fanfare.");
   await form.locator("button[type=submit]").click();
   await status(artistPage, 'form[data-act="answer"]', "Done.");
-  await artistPage.waitForTimeout(1500);
   await artistPage.locator(".qa .answer", { hasText: "Fanfare." }).waitFor({ timeout: 30_000 });
-  await shot(artistPage, "8-qa");
+  await shot(artistPage, "9-qa");
+
+  await visit(alicePage, "#/me");
+  await alicePage.locator("li", { hasText: "What's the next album called?" }).locator(".answer", { hasText: "Fanfare." }).waitFor();
 });
 
-test("merch: the artist's key goes on their profile; a fan's address opens only for the artist", async () => {
-  await artistPage.click('[data-act="new-listing"]');
+test("merch: an address only the artist opens, marked shipped, and a gift confirmed by name", async () => {
+  await visit(artistPage, ME());
+  await artistPage.click('.head-acts [data-act="new-listing"]');
   await artistPage.check('input[name=kind][value=merch]');
   await artistPage.fill("#nl-title", "Tour shirt");
   await artistPage.fill("#nl-count", "1");
   await artistPage.fill("#nl-price", "30");
   await artistPage.click('form[data-act="create-listing"] button[type=submit]');
   await status(artistPage, 'form[data-act="create-listing"]', "Done.");
-  await artistPage.waitForTimeout(1500);
-  await artistPage.click('[data-act="shipping"]');
+  await visit(artistPage, ME());
+  await artistPage.click('.tool-row [data-act="shipping"]');
   await artistPage.click('[data-act="publish-key"]');
   await status(artistPage, "#shipping", "Done.");
 
-  await visit(alicePage, "#/a/band");
-  await alicePage.click('#l-tour-shirt [data-ticket="tour-shirt/1"]');
+  await visit(alicePage, ME());
+  await alicePage.click('#l-tour-shirt [data-act="buy"]');
   const form = alicePage.locator('form[data-act="confirm-buy"]');
   await form.locator("[name=name]").fill("Alice");
   await form.locator("[name=line1]").fill("1 Main St");
   await form.locator("[name=city]").fill("Berlin");
   await form.locator("[name=country]").fill("Germany");
-  await shot(alicePage, "9-merch");
+  await shot(alicePage, "10-merch");
   await form.locator("button[type=submit]").click();
   await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
 
-  await visit(artistPage, "#/a/band");
-  await artistPage.click('[data-act="shipping"]');
-  await artistPage.locator(".addresses li", { hasText: "1 Main St" }).waitFor();
-  await shot(artistPage, "10-addresses");
+  await visit(artistPage, ME());
+  await artistPage.locator(".todo", { hasText: "1 order to ship" }).waitFor({ timeout: 30_000 });
+  await artistPage.click('.tool-row [data-act="shipping"]');
+  const order = artistPage.locator(".addresses li", { hasText: "1 Main St" });
+  await order.waitFor();
+  await shot(artistPage, "11-addresses");
+  await order.locator('[data-act="mark-shipped"]').click();
+  await order.locator(".good-text", { hasText: "Shipped" }).waitFor({ timeout: SECONDS * 1000 });
+
+  await visit(alicePage, "#/me");
+  const item = alicePage.locator('li[data-ticket="tour-shirt/1"]');
+  await item.locator(".good-text", { hasText: "Shipped" }).waitFor();
+  await item.locator('[data-act="give"]').click();
+  await item.locator("#to").fill(bob.address);
+  await item.locator("button[type=submit]").click();
+  await item.locator(".status", { hasText: "you can't take it back" }).waitFor();
+  await item.locator("button[type=submit]", { hasText: "Give to" }).click();
+  await status(alicePage, 'form[data-act="give-confirm"]', "Done.");
 
   // At phone width nothing scrolls sideways.
   await artistPage.setViewportSize({ width: 390, height: 844 });
+  await visit(artistPage, ME());
+  await artistPage.locator("#l-berlin").waitFor();
   await shot(artistPage, "12-phone");
   const wide = await artistPage.evaluate(() =>
     [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > 391).map((el) => `${el.tagName}.${el.className}`).slice(0, 5));
@@ -348,8 +412,13 @@ test("merch: the artist's key goes on their profile; a fan's address opens only 
   await artistPage.setViewportSize({ width: 1100, height: 900 });
 });
 
-test("launch: the page names the chain, checks the name, and gives the command", async () => {
+test("an artist's own coin: prices in it, its risk said plainly; launch names the chain and gives the command", async () => {
+  await visit(alicePage, "#/a/band");
+  await alicePage.locator(".coin", { hasText: "its price can fall to nothing" }).waitFor();
+  await alicePage.locator(".artist-head", { hasText: "Prices in their own coin, band" }).waitFor();
+
   await visit(artistPage, "#/launch");
+  await artistPage.locator(".consider", { hasText: "Most artists don't need this" }).waitFor();
   await artistPage.fill("#ln", "band");
   await artistPage.click('form[data-act="launch-command"] button[type=submit]');
   await artistPage.locator(".status.bad", { hasText: "band is taken" }).waitFor();
@@ -357,7 +426,7 @@ test("launch: the page names the chain, checks the name, and gives the command",
   await artistPage.click('form[data-act="launch-command"] button[type=submit]');
   const command = await artistPage.locator("#ln-steps pre").textContent();
   assert.match(command, new RegExp(`child create Nexus/fanfare/choir --spec choir.json --policy-module fanfare_policy.wasm --premine-to ${artist.address}`));
-  await shot(artistPage, "11-launch");
+  await shot(artistPage, "13-own-coin");
 });
 
 test("the shipped policy module is the one built from policy/", () => {

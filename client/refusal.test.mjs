@@ -94,7 +94,8 @@ test("a write landed only when every action reads as written", async () => {
   // written, but the purchase beside it hasn't landed.
   assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "berlin/A2", "Q")));
   const w = write.buy(seat2, ALICE);
-  w.actions.push({ key: `user/${ALICE}/question/${ARTIST}/berlin/A2`, oldValue: "Q", newValue: "Q" });
+  const asked = await c.state.get(`user/${ALICE}/question/${ARTIST}/berlin/A2`);
+  w.actions.push({ key: `user/${ALICE}/question/${ARTIST}/berlin/A2`, oldValue: asked, newValue: asked });
   const pending = await explain(c.state, w, ALICE);
   assert.deepEqual(pending.map((x) => x.reason), ["done"]);
   assert.ok(!landed(w, pending));

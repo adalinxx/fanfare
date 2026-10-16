@@ -167,22 +167,29 @@ test("a paid question: the slot's holder asks, the artist answers", async () => 
   const c = await show();
   assert.ok(
     await c.write(ARTIST, [
-      ...write.listing(ARTIST, "qa-oct", { kind: "qa", title: "Ask me anything" }),
+      ...write.listing(ARTIST, "qa-oct", { kind: "qa", title: "Ask me anything", price: "50", answerWithin: 7 }),
       ...write.mint(ARTIST, "qa-oct/1", { price: 50n }),
       ...write.mint(ARTIST, "qa-oct/2", { price: 50n }),
     ]),
   );
   assert.ok(c.submit(ALICE, ...Object.values(write.buy(await read.ticket(c.state, ARTIST, "qa-oct/1"), ALICE))));
-  assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "qa-oct/1", "First gig?")));
+  assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "qa-oct/1", "First gig?", 1_800_000_000_000)));
   // A question on a slot the asker doesn't hold doesn't count.
   assert.ok(await c.write(BOB, write.question(BOB, ARTIST, "qa-oct/2", "Free question?")));
   assert.deepEqual(
     (await read.questions(c.state, ARTIST, "qa-oct")).map(({ ticket, text, answer }) => [ticket.id, text, answer]),
     [["qa-oct/1", "First gig?", undefined]],
   );
-  assert.ok(await c.write(ARTIST, write.answer(ARTIST, "qa-oct/1", "First gig?", "A basement in Leipzig.")));
+  const [first] = await read.questions(c.state, ARTIST, "qa-oct");
+  assert.equal(first.at, 1_800_000_000_000);
+  // The answer names the question as stored, so it can't be matched to the bare text.
+  assert.ok(await c.write(ARTIST, write.answer(ARTIST, "qa-oct/1", "First gig?", "Wrong match.")));
+  assert.equal((await read.questions(c.state, ARTIST, "qa-oct"))[0].answer, undefined);
+  assert.ok(await c.write(ARTIST, write.answer(ARTIST, "qa-oct/1", first.value, "A basement in Leipzig.")));
   assert.equal((await read.questions(c.state, ARTIST, "qa-oct"))[0].answer, "A basement in Leipzig.");
-  assert.equal((await read.listing(c.state, ARTIST, "qa-oct")).kind, "qa");
+  const qa = await read.listing(c.state, ARTIST, "qa-oct");
+  assert.deepEqual([qa.kind, qa.price, qa.answerWithin], ["qa", 50n, 7]);
+  assert.deepEqual(read.asked("plain text"), { text: "plain text" });
 
   // Alice sells the slot on; Bob asks something new, and the old answer isn't his.
   const slot = await read.ticket(c.state, ARTIST, "qa-oct/1");
@@ -203,38 +210,39 @@ test("the door: the holder's pass gets them in once, and only trusted staff chec
   const ticket = await read.ticket(c.state, ARTIST, "berlin/guest");
 
   const ORIGIN = "https://fanfare.example";
-  const NOW = 1_800_000_000_000;
-  const passOf = async (who, { origin = ORIGIN, at = NOW, id = ticket.id } = {}) =>
-    door.readPass(await door.pass(walletOf(who, origin), origin, ARTIST, id, at));
+  const CHAIN = "Nexus/fanfare";
+  const passOf = async (who, { origin = ORIGIN, chain = CHAIN, id = ticket.id } = {}) =>
+    door.readPass(await door.pass(walletOf(who, origin), origin, chain, ARTIST, id));
   const berlin = await read.listing(c.state, ARTIST, "berlin");
-  const verdict = async (scanned, now = NOW, listing = berlin) => (await door.check(sdk, [ORIGIN], scanned, listing, ticket, [], now)).reason;
-  assert.deepEqual(await door.check(sdk, [ORIGIN], await passOf(fan), berlin, ticket, [], NOW), { ok: true });
-  assert.equal(await verdict(await passOf(fan), NOW + door.PASS_LIFETIME_MS - 1000), undefined);
-  assert.equal(await verdict(await passOf(fan), NOW + door.PASS_LIFETIME_MS + 1000), "expired");
+  const verdict = async (scanned, listing = berlin, held = ticket) => (await door.check(sdk, [ORIGIN], CHAIN, scanned, listing, held, [])).reason;
+  assert.deepEqual(await door.check(sdk, [ORIGIN], CHAIN, await passOf(fan), berlin, ticket, []), { ok: true });
   assert.equal(await verdict(await passOf(other)), "not-holder");
+  assert.equal(await verdict(await passOf(fan, { chain: "Nexus/fanfare/band" })), "no-ticket", "a pass for another chain's ticket");
   assert.equal(await verdict(await passOf(fan, { origin: "https://other.example" })), "site", "made on another site");
   // A pass that claims Fanfare's origin but was signed for another site doesn't verify.
   const elsewhere = await passOf(fan, { origin: "https://other.example" });
   assert.equal(await verdict({ ...elsewhere, origin: ORIGIN }), "not-holder");
   // The ticket is for Berlin, not for another show or a Q&A.
   assert.ok(await c.write(ARTIST, write.listing(ARTIST, "paris", { kind: "ticket", title: "Paris" })));
-  assert.equal(await verdict(await passOf(fan), NOW, await read.listing(c.state, ARTIST, "paris")), "other-show");
-  assert.equal(await verdict(await passOf(fan), NOW, { ...berlin, kind: "qa" }), "other-show");
+  assert.equal(await verdict(await passOf(fan), await read.listing(c.state, ARTIST, "paris")), "other-show");
+  assert.equal(await verdict(await passOf(fan), { ...berlin, kind: "qa" }), "other-show");
   assert.ok(door.inListing("berlin", "berlin") && door.inListing("berlin", "berlin/A1") && !door.inListing("berlin", "berlin-2/A1"));
   // A listing named inside another's tickets isn't a listing Fanfare shows, so no door is opened for it.
   assert.ok(await c.write(ARTIST, write.listing(ARTIST, "berlin/shirts", { kind: "merch", title: "Shirts" })));
   assert.equal(await read.listing(c.state, ARTIST, "berlin/shirts"), undefined);
   assert.ok(!(await read.listings(c.state, ARTIST)).some((l) => l.name.includes("/")));
   assert.equal(await verdict(await passOf(fan, { id: "berlin/A1" })), "no-ticket", "a pass for another ticket");
-  // A pass whose time was edited no longer verifies.
-  const edited = { ...(await passOf(fan)), time: String(NOW / 1000 + 30) };
-  assert.equal(await verdict(edited), "not-holder");
   const scanned = await passOf(fan);
-  const text = door.passText(ARTIST, ticket.id, scanned.time);
+  const text = door.passText(CHAIN, ARTIST, ticket.id);
   const transactionSignature = { publicKey: fan.publicKey, signature: sdk.signPreimage(text, fan.privateKey) };
   assert.equal(await verdict({ ...scanned, proof: transactionSignature }), "not-holder", "a transaction-domain signature");
   assert.equal(await verdict({ ...scanned, proof: { publicKey: "zz", signature: "00" } }), "not-holder");
-  assert.equal((await door.check(sdk, [ORIGIN], scanned, berlin, ticket, ["staff"], NOW)).reason, "used");
+  assert.equal((await door.check(sdk, [ORIGIN], CHAIN, scanned, berlin, ticket, ["staff"])).reason, "used");
+  // A pass has no time limit, but it stops working once the ticket is sold or given away.
+  // The door reads the holder from state at the scan; here, as it reads after a sale to `other`.
+  const resold = { ...ticket, holder: other.address, value: other.address };
+  assert.equal(await verdict(scanned, berlin, resold), "not-holder", "the seller's old pass");
+  assert.equal(await verdict(await passOf(other), berlin, resold), undefined, "the buyer's pass");
   assert.equal(door.readPass("hello"), undefined);
   assert.equal(door.readPass('fanfare-pass:{"a":"x"}'), undefined);
 
@@ -277,4 +285,18 @@ test("an artist chain is created under the home chain with the premine to the ar
     "child", "create", "Nexus/fanfare/band", "--spec", "s.json", "--policy-module", "p.wasm", "--premine-to", ARTIST,
   ]);
   for (const name of ["", "a/b", undefined]) assert.throws(() => launch.chainPath(name));
+});
+
+test("the shared chain: every artist's listings, and merch marked shipped", async () => {
+  const c = await show();
+  assert.ok(await c.write(BOB, write.listing(BOB, "leipzig", { kind: "ticket", title: "Leipzig", price: "20" })));
+  assert.deepEqual(
+    (await read.allListings(c.state)).map((l) => [l.artist, l.name]).sort(),
+    [[ARTIST, "berlin"], [BOB, "leipzig"]].sort(),
+  );
+  assert.ok(await c.write(ARTIST, write.shipped(ARTIST, "shirts/1")));
+  assert.ok(!(await c.write(BOB, write.shipped(ARTIST, "shirts/2"))), "only the artist marks their merch shipped");
+  assert.deepEqual([...(await read.shipped(c.state, ARTIST))], ["shirts/1"]);
+  assert.ok(await c.write(BOB, write.mint(BOB, "leipzig/1", { to: ALICE })));
+  assert.ok((await read.heldAll(c.state, ALICE)).some((t) => t.artist === BOB && t.id === "leipzig/1"));
 });

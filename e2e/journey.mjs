@@ -238,7 +238,8 @@ try {
   const ask = write.buy(slot, alice.address);
   ask.actions.push(...(await write.changes(await state(), write.question(alice.address, artist.address, "qa/1", "What's the next album called?"))));
   await lands("Alice asks", alice, ask, async () => (await read.questions(await state(), artist.address, "qa")).length === 1);
-  await lands("the artist answers", artist, { actions: await write.changes(await state(artistNode), write.answer(artist.address, "qa/1", "What's the next album called?", "Fanfare.")) },
+  const [question] = await read.questions(await state(artistNode), artist.address, "qa");
+  await lands("the artist answers", artist, { actions: await write.changes(await state(artistNode), write.answer(artist.address, "qa/1", question.value, "Fanfare.")) },
     async () => (await read.questions(await state(), artist.address, "qa"))[0]?.answer === "Fanfare.", artistNode);
   console.log("Alice paid 100 for a question; the artist answered it");
 
@@ -255,7 +256,7 @@ try {
   // The door: Bob's wallet signs a pass for A1; Alice's can't stand in for it.
   const ticket = await ticketOf(`${SHOW}/A1`);
   const show = await read.listing(await state(), artist.address, SHOW);
-  const atDoor = async (who) => door.check(sdk, [ORIGIN], door.readPass(await door.pass(walletOf(who), ORIGIN, artist.address, ticket.id)),
+  const atDoor = async (who) => door.check(sdk, [ORIGIN], CHAIN.join("/"), door.readPass(await door.pass(walletOf(who), ORIGIN, CHAIN.join("/"), artist.address, ticket.id)),
     show, await ticketOf(ticket.id), await read.checkins(await state(), artist.address, ticket.id));
   assert.deepEqual(await atDoor(bob), { ok: true });
   assert.equal((await atDoor(alice)).reason, "not-holder");

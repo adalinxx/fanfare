@@ -124,6 +124,40 @@ dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--s
 dialog::backdrop { background: rgb(0 0 0 / .35); }
 dialog form { display: flex; flex-direction: column; gap: 8px; }
 .links { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 14px; }
+.coming { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
+.show-row { display: flex; gap: 14px; align-items: center; text-decoration: none; color: var(--ink); margin: 0; }
+.show-row:hover { border-color: var(--accent); }
+.show-row > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.when { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 64px; padding: 6px 0; border-radius: 10px; background: var(--accent-soft); color: var(--accent-deep); line-height: 1.2; }
+.when b { font: 600 15px var(--display); }
+.when span { font-size: 12px; }
+.buy-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.promise { margin: 8px 0 0; color: var(--soft-ink); }
+details > summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-top: 10px; }
+details.past, details.resales { margin-top: 12px; }
+.sheet .what { margin: 0; }
+.total { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 2px 24px; margin: 0; font-variant-numeric: tabular-nums; }
+.total dt { color: var(--muted); }
+.total dd { margin: 0; text-align: right; }
+.good-text { color: var(--good); }
+.todo { margin: 8px 0; padding-left: 18px; }
+.todo li { margin: 4px 0; }
+.verify p { margin: 8px 0 0; }
+.consider ul { padding-left: 18px; margin: 8px 0 0; }
+.consider li { margin: 4px 0; }
+.wallet-row, .coin-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.wallet-row .label, .coin-row .label { display: block; font-size: 13px; color: var(--muted); }
+#fan-market { flex-basis: 100%; }
+.coin { display: block; }
+.coin h2 { font-size: 18px; }
+.check { display: flex; gap: 8px; align-items: center; font-weight: 400 !important; }
+.check input { width: auto; }
+.held-head { display: flex; justify-content: space-between; gap: 12px; }
+.addresses li.done { opacity: .7; }
+.to-phone svg { width: 160px; height: auto; background: #fff; border-radius: 8px; margin-top: 8px; }
+.pass.full { padding-top: 16px; }
+.pass.full svg { width: min(420px, 100%); }
+body.bare header.top { display: none; }
 @media (max-width: 420px) { #who .chip { display: none; } }
 @media (max-width: 600px) {
   header nav .wide { display: none; }
@@ -136,7 +170,7 @@ dialog form { display: flex; flex-direction: column; gap: 8px; }
 <body>
 <header class="top">
   <a class="brand" href="#/">fanfare</a>
-  <nav aria-label="Main"><a class="btn ghost small wide" href="#/launch">Launch your coin</a></nav>
+  <nav aria-label="Main"><a class="btn ghost small" href="#/sell">Sell</a></nav>
   <div id="who"></div>
   <button class="btn ghost small" type="button" data-act="settings" aria-label="Settings" title="Settings">⚙︎</button>
 </header>

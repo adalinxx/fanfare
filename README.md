@@ -1,12 +1,15 @@
 # Fanfare
 
-Every artist gets their own coin. Fans earn it by mining or buy it, and spend
-it on tickets, merch and paid questions. Tickets and other purchases are
-tokens that their holders can transfer and resell.
+Artists sell show tickets, merch and paid questions straight from their
+wallet. Tickets and other purchases are tokens that their holders can
+transfer and resell. The chain is the database; the client is the app.
 
-Each artist is a chain under `Nexus/fanfare` (for example `Nexus/fanfare/band`),
-and the artist's coin is that chain's coin. The chain is the database; the
-client is the app.
+Most artists sell on the Fanfare chain itself, `Nexus/fanfare`, priced in its
+coin (FAN), with nothing to set up: the policy names every seller by address.
+An artist whose fans want to hold something of theirs can also launch their
+own coin: a chain under `Nexus/fanfare` (for example `Nexus/fanfare/band`)
+whose coin fans can mine, buy and spend on what the artist prices in it.
+Both run the same records and policy.
 
 **Trial.** Until `Nexus/fanfare` launches, the app defaults to a trial on
 testnet: home chain `Nexus/testnet/fanfare-a5688b`, profiles on Moniker's
@@ -17,16 +20,23 @@ trial `Nexus/testnet/moniker-da6f57`, read from
 ## Records
 
 ```
-item/<artist>/<name>                        listing: {kind, title, venue, date, media, closed?}
+item/<artist>/<name>                        listing: {kind, title, venue, date, media, price, answerWithin, closed?}
 user/<artist>/answer/<id>        {question, answer}: the artist's answer to the question it names
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
+user/<artist>/shipped/<id>                  a merch item the artist shipped
 index/checkin/<artist>/<id>/<staff>   ticket used at the door
 
 own/<artist>/<id>                           a ticket; value = <holder> or <holder>@<price>
 
-user/<fan>/question/<artist>/<id>   question text
+user/<fan>/question/<artist>/<id>   {text, at}: the question, and when (the asker's clock)
 user/<fan>/ship/<artist>/<id>       shipping address, encrypted to the artist
 ```
+
+A listing's `price` is what its tickets cost new, so a resale can show it;
+`answerWithin` is how many days the artist promises to answer a paid
+question in (7 when unset). Fanfare shows that window and the artist's record
+so far before a fan buys, and marks a question overdue after it. It promises
+no refund: the fan pays up front, and the asker's clock dates the question.
 
 Each ticket is its own token, named by the artist, for example
 `berlin-night-1/A12`; a show's tickets share its listing's name as a prefix.
@@ -46,8 +56,9 @@ keyed by address like every app's. Fanfare adds one field there,
 
 ## Who an artist is
 
-The artist of a chain is the account its genesis paid the premine to: only
-whoever created the chain could choose it. Names are first come, so the client
+On the Fanfare chain an artist is the address that signs their listings.
+The artist of their own coin's chain is the account its genesis paid the
+premine to: only whoever created the chain could choose it. Names are first come, so the client
 shows an artist as verified only when the chain, the profile and the artist's
 own site point at one another: the card's `url` is an https site, and
 `https://<site>/.well-known/lattice` lists the artist's address (plain text,
@@ -125,9 +136,11 @@ pays the premine to `--premine-to`. Names are first come.
   from their wallet signing a fixed text, so Fanfare stores no key and the
   same account always gets the same key back.
 - `door.mjs` is the door check: the holder's wallet signs a pass for the
-  ticket and the time (`signMessage`, bound to Fanfare's origin), shown as a
-  QR code. Staff scan it, and it is good for two minutes and until the
-  ticket is checked in.
+  chain and the ticket (`signMessage`, bound to Fanfare's origin), shown as
+  a QR code. It has no time limit, so a fan can keep it on their phone. The
+  door reads the ticket's holder at the scan, so a pass stops working once
+  the ticket is checked in, sold or given away; a copy works for whoever
+  reaches the door first, as a printed ticket does.
 
 The client tests run every transaction they build through the built policy
 before applying it:

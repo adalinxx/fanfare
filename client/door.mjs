@@ -1,11 +1,15 @@
-// The door check. The fan's page shows a pass: the ticket and the time,
-// signed by the fan's Lattice wallet (`signMessage`) with the holder's key,
-// as a QR code. Staff at one show's door scan it; the scanner reads the
-// ticket's holder from state, checks the signature, the time and that the
-// ticket is for this show, then writes the check-in (write.mjs `checkin`)
-// and lets them in once it lands. A pass lives two minutes, and a ticket
-// already checked in is turned away. Two doors scanning the same pass within
-// one block can both admit it: both check-ins land.
+// The door check. The fan's page shows a pass: the chain, the artist and the
+// ticket, signed by the fan's Lattice wallet (`signMessage`) with the
+// holder's key, as a QR code. A pass has no time limit: the fan can save it
+// and open it on any device. Staff at one show's door scan it; the scanner
+// reads the ticket's holder from state now, checks the signature against
+// that holder and that the ticket is for this show, then writes the check-in
+// (write.mjs `checkin`) and lets them in once it lands.
+//
+// So a pass stops working when its ticket is checked in, sold or given away:
+// the new holder's key didn't sign it. A copy of a pass works for whoever
+// reaches the door first, as a printed ticket does. Two doors scanning the
+// same pass within one block can both admit it: both check-ins land.
 //
 // The wallet signs "lattice-message:" + the asking page's origin + "\n" +
 // the text. A transaction's signed bytes start with another prefix, so a pass
@@ -13,35 +17,32 @@
 // on, and a door accepts only the Fanfare sites it lists, so a site that got
 // a holder to sign a pass can't use it.
 
-/** How long a pass is good for, either side of the scanner's clock. */
-export const PASS_LIFETIME_MS = 2 * 60_000;
 const PREFIX = "fanfare-pass:";
 
-/** The text a pass signs: ticket `id` of `artist` at `time` (Unix seconds). */
-export const passText = (artist, id, time) => `fanfare-door\nartist:${artist}\nticket:${id}\ntime:${time}`;
+/** The text a pass signs: ticket `id` of `artist` on `chain` (a path, joined by "/"). */
+export const passText = (chain, artist, id) => `fanfare-door\nchain:${chain}\nartist:${artist}\nticket:${id}`;
 
 /** The bytes a wallet signs for `text` asked by a page at `origin`. */
 export const signedBytes = (origin, text) => new TextEncoder().encode(`lattice-message:${origin}\n${text}`);
 
 /**
- * A pass for ticket `id` of `artist`, signed by the fan's wallet
+ * A pass for ticket `id` of `artist` on `chain`, signed by the fan's wallet
  * (`window.lattice`) on a page at `origin`: the text to put in a QR code.
  * The wallet binds the signature to the page's origin, so the pass names it
  * and the door checks it against the Fanfare sites it accepts.
  */
-export async function pass(lattice, origin, artist, id, now = Date.now()) {
-  const time = String(Math.floor(now / 1000));
-  const { publicKey, signature } = await lattice.signMessage({ text: passText(artist, id, time) });
-  return PREFIX + JSON.stringify({ o: origin, a: artist, i: id, t: time, k: publicKey, s: signature });
+export async function pass(lattice, origin, chain, artist, id) {
+  const { publicKey, signature } = await lattice.signMessage({ text: passText(chain, artist, id) });
+  return PREFIX + JSON.stringify({ o: origin, c: chain, a: artist, i: id, k: publicKey, s: signature });
 }
 
-/** A scanned pass as `{ origin, artist, id, time, proof }`, or undefined if it isn't one. */
+/** A scanned pass as `{ origin, chain, artist, id, proof }`, or undefined if it isn't one. */
 export function readPass(code) {
   if (typeof code !== "string" || !code.startsWith(PREFIX)) return undefined;
   try {
-    const { o, a, i, t, k, s } = JSON.parse(code.slice(PREFIX.length));
-    if (![o, a, i, t, k, s].every((field) => typeof field === "string" && field !== "") || !/^[0-9]+$/.test(t)) return undefined;
-    return { origin: o, artist: a, id: i, time: t, proof: { publicKey: k, signature: s } };
+    const { o, c, a, i, k, s } = JSON.parse(code.slice(PREFIX.length));
+    if (![o, c, a, i, k, s].every((field) => typeof field === "string" && field !== "")) return undefined;
+    return { origin: o, chain: c, artist: a, id: i, proof: { publicKey: k, signature: s } };
   } catch {
     return undefined;
   }
@@ -66,21 +67,20 @@ export async function verify(sdk, origin, text, proof, ticket) {
 
 /**
  * The scanner's verdict on a pass (from `readPass`) at the door of
- * `listing` (read.mjs `listing`), for `ticket` as read now, with `checkins`
- * (read.mjs `checkins`) for it: `{ ok: true }`, or `{ ok: false, reason,
- * text }`. `origins` are the Fanfare sites whose passes this door accepts.
+ * `listing` (read.mjs `listing`) on `chain`, for `ticket` as read now, with
+ * `checkins` (read.mjs `checkins`) for it: `{ ok: true }`, or `{ ok: false,
+ * reason, text }`. `origins` are the Fanfare sites whose passes this door
+ * accepts.
  */
-export async function check(sdk, origins, scanned, listing, ticket, checkins, now = Date.now()) {
+export async function check(sdk, origins, chain, scanned, listing, ticket, checkins) {
   if (!origins.includes(scanned.origin))
     return { ok: false, reason: "site", text: `This pass was made on ${scanned.origin}, which this door doesn't accept.` };
-  if (!ticket || ticket.artist !== scanned.artist || ticket.id !== scanned.id)
+  if (scanned.chain !== chain || !ticket || ticket.artist !== scanned.artist || ticket.id !== scanned.id)
     return { ok: false, reason: "no-ticket", text: "There is no such ticket." };
   if (listing?.artist !== ticket.artist || listing.kind !== "ticket" || !inListing(listing.name, ticket.id))
     return { ok: false, reason: "other-show", text: `This ticket isn't for ${listing?.title ?? "this show"}.` };
-  if (Math.abs(now - Number(scanned.time) * 1000) > PASS_LIFETIME_MS)
-    return { ok: false, reason: "expired", text: "This pass has expired. Ask for a fresh one." };
-  if (!(await verify(sdk, scanned.origin, passText(scanned.artist, scanned.id, scanned.time), scanned.proof, ticket)))
-    return { ok: false, reason: "not-holder", text: "This pass isn't from the ticket's holder." };
+  if (!(await verify(sdk, scanned.origin, passText(scanned.chain, scanned.artist, scanned.id), scanned.proof, ticket)))
+    return { ok: false, reason: "not-holder", text: "This pass isn't from the ticket's holder. It may have been sold or given away since." };
   if (checkins.length > 0) return { ok: false, reason: "used", text: "This ticket was already checked in." };
   return { ok: true };
 }
