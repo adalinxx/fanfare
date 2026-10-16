@@ -11,7 +11,9 @@ wallet (`window.lattice`) to sign: the page keeps no key and has no server.
   the site on that profile lists their address (see the main README, "Who an
   artist is"). Nothing is shown for an artist who hasn't set that up.
 - **Sell** (`#/sell`) puts a show on sale from the connected wallet on the
-  Fanfare chain: a title, a date and venue, how many
+  Fanfare chain, with an optional image that the artist's own node keeps
+  (its address and cookie go in Settings, and the node must allow this site
+  in `rpcAllowedOrigins`): a title, a date and venue, how many
   and a price, minted in one write. It then links the artist's page.
 - **An artist's page** (`#/a/<name>` for their own coin's chain,
   `#/a/@<address>` on the Fanfare chain) shows their shows by date. One
@@ -55,7 +57,7 @@ python3 -m http.server 8765   # from the repository root, then open
 
 `vendor/` holds the browser bundle of `@adalinxx/lattice-sdk`
 (`esbuild --bundle --format=esm`, as Stoa's), `qrcode-generator` 2.0.4
-(MIT), and Moniker's `src/records/profile.mjs` (github.com/adalinxx/moniker-sdk, tag v0.1.1). The
+(MIT), Moniker's `client/media.mjs` (commit e8c9b9c), and Moniker's `src/records/profile.mjs` (github.com/adalinxx/moniker-sdk, tag v0.1.1). The
 fonts in `fonts/` are Bricolage Grotesque and Instrument Sans (SIL Open Font
 License), shipped with the page so no font host sees who visits.
 `fanfare_policy.wasm` is the built policy, offered at launch; a UI test

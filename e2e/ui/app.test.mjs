@@ -153,6 +153,8 @@ before(async () => {
   lattice("init");
   configure((topology) => {
     Object.assign(topology, { listen, rpc, publicRead, webSocket: 0, publicSubmit: true });
+    // The artist's page keeps show images on this node.
+    topology.rpcAllowedOrigins = [`http://127.0.0.1:${appPort}`];
     topology.publicReadExpensiveRate = 1000;
     topology.publicReadRate = 1000;
     topology.peers = [];
@@ -197,6 +199,8 @@ let artistPage;
 let alicePage;
 const ME = () => `#/a/${encodeURIComponent(`@${artist.address}`)}`;
 const SHOW_DATE = "2030-11-14";
+// A 2×1 PNG.
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAD0lEQVR4nGM4YaMhZ3MCAAgdAk+Q1R3QAAAAAElFTkSuQmCC";
 
 test("an artist sells from their wallet: a show on sale in five fields", async () => {
   artistPage = await person(artist);
@@ -207,6 +211,18 @@ test("an artist sells from their wallet: a show on sale in five fields", async (
   await artistPage.fill("#nl-venue", "Tresor");
   await artistPage.fill("#nl-count", "3");
   await artistPage.fill("#nl-price", "250");
+  // An image, kept by the artist's own node: set it in Settings, then choose a file.
+  await artistPage.click('.image-field [data-act="settings"]');
+  await artistPage.fill("#s-own", `http://127.0.0.1:${rpc}`);
+  await artistPage.fill("#s-cookie", readFileSync(`${root}/chains/Nexus/.cookie`, "utf8").trim());
+  await artistPage.click('#settings button[type=submit]');
+  await artistPage.fill("#nl-title", "Berlin");
+  await artistPage.fill("#nl-date", SHOW_DATE);
+  await artistPage.fill("#nl-venue", "Tresor");
+  await artistPage.fill("#nl-count", "3");
+  await artistPage.fill("#nl-price", "250");
+  await artistPage.setInputFiles("#nl-image", { name: "berlin.png", mimeType: "image/png", buffer: Buffer.from(PNG, "base64") });
+  await artistPage.locator(".image-note", { hasText: "Kept by your node." }).waitFor();
   await shot(artistPage, "2-sell");
   await artistPage.click('form[data-act="create-listing"] button[type=submit]');
   await status(artistPage, 'form[data-act="create-listing"]', "Done.");
@@ -231,6 +247,8 @@ test("the home page: what's coming up, and who sells, by their Moniker name", as
   await alicePage.locator(".coming a").first().click();
   await alicePage.locator("h1", { hasText: "The Band" }).waitFor();
   await alicePage.locator(".links a", { hasText: "Bandcamp" }).waitFor();
+  // The show's image, read through the node and checked against its CID.
+  await until("the show image", () => alicePage.locator("#l-berlin img.show-image").evaluate((img) => img.complete && img.naturalWidth === 2), 60);
   assert.equal(await alicePage.locator(".coin").count(), 0, "no coin block for an artist selling in FAN");
 });
 

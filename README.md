@@ -26,7 +26,10 @@ index/checkin/<artist>/<id>/<staff>   ticket used at the door
 own/<artist>/<id>                           a ticket; value = <holder> or <holder>@<price>
 ```
 
-A show's `price` is what its tickets cost new, so a resale can show it.
+A show's `price` is what its tickets cost new, so a resale can show it. Its
+`media` is the CID of its image: a file kept by the artist's own node as a
+Volume (`{ type, bytes }` in DAG-CBOR, as Moniker keeps photos), which any
+node can serve and the page checks against the CID.
 
 Each ticket is its own token, named by the artist, for example
 `berlin-night-1/A12`; a show's tickets share its listing's name as a prefix.

@@ -8,6 +8,7 @@
 // key is `@<address>`. An artist who launched their own coin sells on their
 // own chain under it, priced in that coin: their key is the chain's name.
 import * as sdk from "./vendor/lattice-sdk.js";
+import { mediaVolume, operator } from "./vendor/media.mjs";
 import qrcode from "./vendor/qrcode.mjs";
 import * as profiles from "./vendor/profile.mjs";
 import * as door from "../client/door.mjs";
@@ -32,6 +33,9 @@ const DEFAULTS = {
   home: "Nexus/testnet/fanfare-a5688b",
   profile: "Nexus/testnet/moniker-da6f57",
   origins: "",
+  // The artist's own node, which keeps their show images.
+  ownNode: "",
+  ownCookie: "",
 };
 /** Where an artist edits their name and picture. */
 const MONIKER_APP = "https://adalinxx.github.io/moniker/app/";
@@ -85,6 +89,38 @@ async function stateOf(chain) {
 }
 
 const balanceOf = async (address, chain) => BigInt((await api(`api/state/account/${address}`, chain))?.balance ?? 0);
+
+// Show images: a file kept by the artist's own node as a Volume, named in the
+// show's record by CID (vendor/media.mjs). The page reads it through the
+// node, checks it against the CID, and shows only raster images: an SVG is a
+// document that can run script.
+const IMAGE_TYPES = /^image\/(png|jpeg|gif|webp|avif)$/;
+const IMAGE_MAX = 2_000_000;
+const images = new Map();
+function imageURL(chain, cid) {
+  const key = `${chain.join("/")}|${cid}`;
+  if (!images.has(key)) {
+    const pending = (async () => {
+      const volume = await volumesFor(chain).get(cid);
+      const file = sdk.decodeDagCbor(volume.bytes(cid));
+      if (typeof file?.type !== "string" || !IMAGE_TYPES.test(file.type) || !(file.bytes instanceof Uint8Array) || file.bytes.length > IMAGE_MAX) return null;
+      return URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
+    })().catch(() => {
+      images.delete(key);
+      return null;
+    });
+    images.set(key, pending);
+  }
+  return images.get(key);
+}
+/** A show's image, filled in once it's read; nothing when the show has none. */
+const imageTag = (chain, cid, cls) => (cid ? `<img class="${cls}" data-media="${esc(cid)}" data-chain="${esc(chain.join("/"))}" alt="">` : "");
+function showImages(root) {
+  for (const img of root.querySelectorAll("img[data-media]:not([data-asked])")) {
+    img.dataset.asked = "1";
+    imageURL(img.dataset.chain.split("/"), img.dataset.media).then((url) => (url ? (img.src = url) : img.remove()));
+  }
+}
 
 /** The rules a chain runs, read once for the page's life. */
 function specOf(chain) {
@@ -288,7 +324,7 @@ async function showHome(id) {
   $("#coming").innerHTML = shows.length
     ? `<ul class="coming">${shows.slice(0, 20).map((l) => `<li><a class="card show-row" href="${artistHref(l.info.key)}/${encodeURIComponent(l.name)}">
         <span class="when"><b>${esc(dateText(l.date).split(" ").slice(1, 3).join(" "))}</b><span>${esc(dateText(l.date).split(" ")[0])}</span></span>
-        <span><strong>${esc(nameOf(l.info, cards.get(l.info.key)))}</strong><span class="muted small">${esc(l.title)}${l.venue ? ` · ${esc(l.venue)}` : ""}</span></span></a></li>`).join("")}</ul>`
+        <span><strong>${esc(nameOf(l.info, cards.get(l.info.key)))}</strong><span class="muted small">${esc(l.title)}${l.venue ? ` · ${esc(l.venue)}` : ""}</span></span>${imageTag(l.info.chain, l.media, "thumb")}</a></li>`).join("")}</ul>`
     : `<p class="muted">No shows on sale yet. <a href="#/sell">Put yours on sale.</a></p>`;
   // One card per artist: the Fanfare chain and their own coin's chain, together.
   const byArtist = new Map();
@@ -397,6 +433,7 @@ function listingCard(p, l) {
     ? `<button class="btn primary" type="button" data-act="buy" data-listing="${esc(l.name)}" data-ticket="${esc(next.id)}">Buy ticket · ${money(next.price, p.coin)}</button>${next.holder !== p.artist ? ` <span class="small muted">resale${l.price ? `, originally ${money(l.price, p.coin)}` : ""}</span>` : ""}`
     : l.total > 0 && !p.isArtist ? `<span class="muted">${l.closed ? "Sales closed" : "Sold out"}</span>` : "";
   return `<article class="card listing${l.closed ? " closed" : ""}" id="l-${esc(l.name)}">
+    ${imageTag(p.chain, l.media, "show-image")}
     <header><div><h3>${esc(l.title)}</h3>${where(l) ? `<p class="muted small">${where(l)}</p>` : ""}</div>
       <p class="small muted">${p.isArtist ? `Sold ${l.held} of ${plural(l.total, "ticket")}` : stock}</p></header>
     ${mineHeld.length ? `<p class="small">You have ${plural(mineHeld.length, "ticket")} · <a href="#/me">My tickets</a></p>` : ""}
@@ -491,6 +528,10 @@ function listingForm(coin) {
     <label for="nl-title">Show</label><input id="nl-title" name="title" required placeholder="Berlin" maxlength="120">
     <div class="row"><span><label for="nl-date">Date</label><input id="nl-date" name="date" type="date"></span><span><label for="nl-venue">Venue</label><input id="nl-venue" name="venue" placeholder="Tresor, Berlin" maxlength="120"></span></div>
     <div class="row"><span><label for="nl-count">How many tickets</label><input id="nl-count" name="count" inputmode="numeric" value="100" required></span><span><label for="nl-price">Price, in ${esc(coin)}</label><input id="nl-price" name="price" inputmode="numeric" value="250" required></span></div>
+    <div class="image-field"><label for="nl-image">Image <span class="muted">(optional)</span></label>
+      ${settings.ownNode && settings.ownCookie
+        ? `<input id="nl-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><input type="hidden" name="media"><img class="preview" hidden alt=""><p class="small muted image-note">Your node, ${esc(settings.ownNode)}, keeps it and fans' nodes can serve it.</p>`
+        : `<p class="small muted">Images are kept by your own node. <button class="linkish" type="button" data-act="settings">Set your node</button> to add one.</p>`}</div>
     <p class="small muted">Fans see how many exist. Once sold, a ticket is the fan's: they can give it away or sell it on at any price, and you can't take it back.</p>
     <div class="acts"><button class="btn primary" type="submit">Put on sale</button></div>
     <p class="status" hidden></p><div class="after" hidden></div></form>`;
@@ -521,6 +562,7 @@ async function createListing(form) {
     price: String(price),
     ...(data.venue?.trim() && { venue: data.venue.trim() }),
     ...(data.date && { date: data.date }),
+    ...(data.media && { media: data.media }),
   };
   const writes = [...write.listing(p.artist, name, record), ...newIds(name, [], count).flatMap((id) => write.mint(p.artist, id, { price }))];
   const share = `${location.origin}${location.pathname}${artistHref(p.key)}`;
@@ -531,6 +573,34 @@ async function createListing(form) {
     // Read again, so the next listing is named against this one.
     loadArtist(p.key).then((fresh) => still(p) && (page = fresh), () => {});
   });
+}
+
+/** Keeps the chosen image on the artist's own node, and names it in the form by CID. */
+async function keepImage(input) {
+  const form = input.form;
+  const note = $(".image-note", form);
+  const preview = $(".preview", form);
+  $("[name=media]", form).value = "";
+  preview.hidden = true;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!IMAGE_TYPES.test(file.type)) return (note.textContent = "Choose a PNG, JPEG, GIF, WebP or AVIF image.");
+  if (file.size > IMAGE_MAX) return (note.textContent = "Choose an image under 2 MB.");
+  note.textContent = "Keeping it on your node…";
+  const button = $("button[type=submit]", form);
+  button.disabled = true;
+  try {
+    const volume = mediaVolume(sdk, file.type, new Uint8Array(await file.arrayBuffer()));
+    await operator(settings.ownNode, settings.ownCookie).pin(volume);
+    $("[name=media]", form).value = volume.cid;
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+    note.textContent = "Kept by your node.";
+  } catch (error) {
+    note.textContent = `Your node didn't keep it: ${error.message}. Check the node and its cookie in Settings, and that it allows this site (rpcAllowedOrigins).`;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function showSell(id) {
@@ -683,7 +753,7 @@ async function showMine(id) {
 function heldRow(x) {
   const { info, ticket, listing } = x;
   return `<li data-key="${esc(info.key)}" data-ticket="${esc(ticket.id)}">
-    <div class="held-head"><div><strong>${esc(listing.title)}</strong> <span class="muted">· <a href="${artistHref(info.key)}">${esc(x.label)}</a></span>
+    <div class="held-head">${imageTag(info.chain, listing.media, "thumb")}<div><strong>${esc(listing.title)}</strong> <span class="muted">· <a href="${artistHref(info.key)}">${esc(x.label)}</a></span>
       ${where(listing) ? `<br><span class="small muted">${where(listing)}</span>` : ""}
       ${ticket.price !== undefined ? `<br><span class="tag">On sale at ${money(ticket.price, info.coin)}</span>` : ""}</div></div>
     ${x.used ? `<p class="small muted">Used at the door</p>` : ""}
@@ -981,12 +1051,21 @@ function openSettings() {
   dialog.querySelector("[name=home]").value = settings.home;
   dialog.querySelector("[name=profile]").value = settings.profile;
   dialog.querySelector("[name=origins]").value = settings.origins;
+  dialog.querySelector("[name=ownNode]").value = settings.ownNode;
+  dialog.querySelector("[name=ownCookie]").value = settings.ownCookie;
   dialog.showModal();
 }
 
 function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form));
-  Object.assign(settings, { node: data.node.trim(), home: data.home.trim() || DEFAULTS.home, profile: data.profile.trim() || DEFAULTS.profile, origins: data.origins.trim() });
+  Object.assign(settings, {
+    node: data.node.trim(),
+    home: data.home.trim() || DEFAULTS.home,
+    profile: data.profile.trim() || DEFAULTS.profile,
+    origins: data.origins.trim(),
+    ownNode: data.ownNode.trim().replace(/\/+$/, ""),
+    ownCookie: data.ownCookie.trim(),
+  });
   store.set("settings", settings);
   sellers.clear();
   homePending = undefined;
@@ -1082,7 +1161,12 @@ document.addEventListener("input", (event) => {
   // A changed recipient is found again before anything is given.
   if (event.target.id === "to") delete event.target.form.dataset.to;
 });
+document.addEventListener("change", (event) => {
+  if (event.target.id === "nl-image") keepImage(event.target).catch((error) => alertLine(error.message));
+});
 window.addEventListener("hashchange", rerender);
+// Images are read once the HTML that names them is on the page.
+new MutationObserver(() => showImages(main())).observe(main(), { childList: true, subtree: true });
 
 async function boot() {
   // The wallet injects `window.lattice` as the page loads; it may come just after.

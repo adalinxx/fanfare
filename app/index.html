@@ -135,11 +135,17 @@ details.past, details.resales { margin-top: 12px; }
 #fan-market { flex-basis: 100%; }
 .coin { display: block; }
 .coin h2 { font-size: 18px; }
-.held-head { display: flex; justify-content: space-between; gap: 12px; }
+.held-head { display: flex; align-items: center; gap: 12px; }
+.held-head .thumb { margin-left: 0; }
 .to-phone svg { width: 160px; height: auto; background: #fff; border-radius: 8px; margin-top: 8px; }
 .pass.full { padding-top: 16px; }
 .pass.full svg { width: min(420px, 100%); }
 body.bare header.top { display: none; }
+.show-image { display: block; width: 100%; max-width: 100%; aspect-ratio: 16 / 9; max-height: 320px; object-fit: cover; border-radius: 10px; margin-bottom: 12px; background: var(--accent-soft); }
+.thumb { flex: none; width: 56px; height: 56px; object-fit: cover; border-radius: 8px; margin-left: auto; }
+.preview { max-width: min(240px, 100%); border-radius: 8px; }
+.image-field { display: flex; flex-direction: column; gap: 6px; }
+.image-field input[type=file] { padding: 8px; }
 @media (max-width: 420px) { #who .chip { display: none; } }
 @media (max-width: 600px) {
   header nav .wide { display: none; }
@@ -167,6 +173,9 @@ body.bare header.top { display: none; }
     <label for="s-profile">Profile chain (Moniker)</label><input id="s-profile" name="profile" class="mono">
     <label for="s-origins">Other Fanfare sites this door accepts passes from</label><input id="s-origins" name="origins" class="mono" placeholder="https://fanfare.example">
     <p class="small muted">A pass is signed for the site it was made on. This site is always accepted.</p>
+    <label for="s-own">Your own node, for keeping show images</label><input id="s-own" name="ownNode" class="mono" placeholder="http://127.0.0.1:8080">
+    <label for="s-cookie">Its cookie (the .cookie file it writes at start)</label><input id="s-cookie" name="ownCookie" type="password" autocomplete="off">
+    <p class="small muted">Your node keeps each image you add, and must allow this site in <span class="mono">rpcAllowedOrigins</span>. The cookie stays in this browser.</p>
     <div class="acts"><button class="btn primary" type="submit">Save</button><button class="btn ghost" type="button" onclick="this.closest('dialog').close()">Cancel</button></div>
   </form>
 </dialog>
