@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-concurrency=1 app.test.mjs"
+    "test": "node --test --test-concurrency=1 app.test.mjs",
+    "test:wallet": "node --test --test-concurrency=1 wallet.test.mjs"
   },
   "devDependencies": {
     "playwright": "1.63.0"

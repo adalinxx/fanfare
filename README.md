@@ -153,7 +153,10 @@ The real-node tests (each file's header has the command):
 every record by CID from a node and has the Lattice wallet sign. See
 `app/README.md`. It needs a browser with Ed25519 in WebCrypto
 (Chrome 137+, Firefox 130+, Safari 17+). The UI tests in `e2e/ui/` drive it
-in headless Chromium against a private node.
+in headless Chromium against a private node (`stack.mjs`): `app.test.mjs`
+with a stand-in wallet that signs as the wallet does, and `wallet.test.mjs`
+with the real Lattice Wallet extension installed, approving each request in
+its own window (connect, sign a write, pay, sign a door pass).
 
 ## Policy build and test
 

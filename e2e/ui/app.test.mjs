@@ -1,11 +1,9 @@
-// The page (`app/`) in headless Chromium against a private Lattice stack: one
-// node mines Nexus, the shared profile chain, the Fanfare chain (where the
-// artist sells from their wallet) and one artist's own coin chain, each
-// launched with its premine to the artist. Each person
-// has their own browser context with a stand-in for the Lattice wallet's
-// `window.lattice` that signs with their key the way the wallet does (the
-// transaction body write.mjs builds, checked against the wallet's own code,
-// and "lattice-message:" + origin for messages) and sends through the node.
+// The page (`app/`) in headless Chromium against a private Lattice stack
+// (stack.mjs). Each person has their own browser context with a stand-in for
+// the Lattice wallet's `window.lattice` that signs with their key the way
+// the wallet does (the transaction body write.mjs builds, checked against
+// the wallet's own code, and "lattice-message:" + origin for messages) and
+// sends through the node. wallet.test.mjs drives the real wallet.
 //
 //   cd e2e/ui && npm ci && npx playwright install chromium
 //   LATTICE=<lattice-node>/.build/debug/lattice \
@@ -14,87 +12,18 @@
 //
 // Screenshots go to $SHOTS when it is set.
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import * as door from "../../client/door.mjs";
-import * as launch from "../../client/launch.mjs";
-import * as wallet from "../../client/wallet.mjs";
-import * as write from "../../client/write.mjs";
+import { HOME, SECONDS, here, signMessage, start, until } from "./stack.mjs";
 
-const sdk = await import(process.env.LATTICE_SDK);
-const here = (path) => fileURLToPath(new URL(path, import.meta.url));
-const PROFILE_DIR = process.env.MONIKER;
-const HOME = launch.HOME;
-const CHAIN = launch.chainPath("band");
-const PROFILE = ["Nexus", "moniker"];
-const [listen, rpc, publicRead, appPort] = [25041, 29390, 29391, 8771];
-const node = `http://127.0.0.1:${publicRead}`;
-const APP = `http://127.0.0.1:${appPort}/app/?${new URLSearchParams({ node, home: "Nexus/fanfare", profile: "Nexus/moniker" })}`;
-const SECONDS = Number(process.env.E2E_SECONDS ?? 300);
-
-const root = mkdtempSync(`${tmpdir()}/fanfare-ui-`);
-const lattice = (...args) => execFileSync(process.env.LATTICE, [...args, "--root", root], { encoding: "utf8" });
-const configure = (change) => {
-  const file = `${root}/lattice.json`;
-  const topology = JSON.parse(readFileSync(file, "utf8"));
-  change(topology);
-  writeFileSync(file, JSON.stringify(topology, null, 2));
-};
-const account = () => sdk.accountFromPrivateKey(sdk.generatePrivateKey());
-const [miner, artist, alice, bob] = [account(), account(), account(), account()];
-
-async function until(label, condition, seconds = SECONDS) {
-  const deadline = Date.now() + seconds * 1000;
-  let failure;
-  for (;;) {
-    const value = await condition().catch((error) => void (failure = error));
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`, { cause: failure });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-}
-async function api(path, chain) {
-  const url = new URL(path, node);
-  url.searchParams.set("chainPath", chain.join("/"));
-  const response = await fetch(url, { cache: "no-store" });
-  return response.ok ? response.json() : undefined;
-}
-const balance = async (who, chain = HOME) => BigInt((await api(`/api/state/account/${who.address}`, chain))?.balance ?? 0);
-
-/** What the wallet does with a writeRecords request: nonce from its node, the body, the signature, the send. */
-async function send(who, request) {
-  const body = write.transaction({
-    owner: who.address,
-    actions: request.actions,
-    payments: (request.payments ?? []).map(({ to, amount }) => ({ to, amount: BigInt(amount) })),
-    fee: BigInt(request.fee),
-    nonce: BigInt((await api(`/api/state/account/${who.address}`, request.chainPath))?.nonce ?? 0),
-    chainPath: request.chainPath,
-  });
-  const { publicKey, signature } = sdk.signTransactionBody(body, who.privateKey);
-  const response = await fetch(new URL("/transactions", node), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(sdk.transactionPayload({ [publicKey]: signature }, body)),
-  });
-  const text = await response.text();
-  return response.ok ? { ok: true, transactionCID: JSON.parse(text).transactionCID ?? "" } : { ok: false, error: `The node refused it: ${text}` };
-}
-
-/** Ed25519 over "lattice-message:" + origin + "\n" + text, as the wallet signs. */
-async function signMessage(who, origin, text) {
-  const pkcs8 = new Uint8Array([...sdk.hexToBytes("302e020100300506032b657004220420"), ...who.privateKey]);
-  const key = await crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"]);
-  const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", key, door.signedBytes(origin, text)));
-  return { publicKey: who.publicKey, signature: sdk.bytesToHex(signature) };
-}
-
+const appPort = 8771;
+let stack;
+let artist;
+let alice;
+let bob;
 let browser;
-let server;
 const asked = [];
 
 /** A browser context for `who`, with the stand-in wallet. */
@@ -104,7 +33,7 @@ async function person(who) {
     asked.push(method);
     if (method === "connect" || method === "address") return { ok: true, address: who.address };
     if (method === "signMessage") return { ok: true, ...(await signMessage(who, origin, params.text)) };
-    if (method === "writeRecords") return send(who, params);
+    if (method === "writeRecords") return stack.send(who, params);
     return { ok: false, error: "Unknown request" };
   });
   await context.addInitScript(() => {
@@ -134,7 +63,7 @@ async function person(who) {
 /** Opens the page at `hash`, fresh, even when it is there already. */
 async function visit(page, hash = "") {
   await page.goto("about:blank");
-  await page.goto(`${APP}${hash}`);
+  await page.goto(`${stack.app}${hash}`);
 }
 
 async function shot(page, name) {
@@ -149,50 +78,14 @@ async function status(page, scope, text) {
 }
 
 before(async () => {
-  assert.ok(PROFILE_DIR, "MONIKER names the moniker checkout");
-  lattice("init");
-  configure((topology) => {
-    Object.assign(topology, { listen, rpc, publicRead, webSocket: 0, publicSubmit: true });
-    // The artist's page keeps show images on this node.
-    topology.rpcAllowedOrigins = [`http://127.0.0.1:${appPort}`];
-    topology.publicReadExpensiveRate = 1000;
-    topology.publicReadRate = 1000;
-    topology.peers = [];
-    topology.mine = { worker: "cpu", workers: 1, batchSize: 100000 };
-  });
-  lattice("child", "create", PROFILE.join("/"), "--spec", `${PROFILE_DIR}/chain/spec.json`,
-    "--policy-module", `${PROFILE_DIR}/chain/moniker_policy.wasm`, "--premine-to", artist.address);
-  // The Fanfare chain runs the Fanfare policy, as the trial does.
-  const specFile = `${root}/spec.json`;
-  writeFileSync(specFile, JSON.stringify(launch.spec()));
-  const policy = here("../../app/fanfare_policy.wasm");
-  lattice("child", "create", HOME.join("/"), "--spec", specFile, "--policy-module", policy, "--premine-to", artist.address);
-  lattice(...launch.createArguments({ name: "band", specFile, moduleFile: policy, artist: artist.address }));
-  configure((topology) => {
-    topology.mine.recipients = Object.fromEntries([HOME, CHAIN, PROFILE].map((c) => [c.join("/"), miner.address]));
-  });
-  lattice("up");
-  lattice("mine", "start");
-  await until("the premines", async () => (await balance(artist)) > 0n && (await balance(artist, CHAIN)) > 0n && (await balance(artist, PROFILE)) > 0n);
-  // Fans get FAN from the artist; the market's legs are the wallet's.
-  const fund = (chain) => send(artist, wallet.writeRequest(chain, { actions: [{ key: `user/${artist.address}/hello`, newValue: chain.join("/") }], payments: [{ to: alice.address, amount: 2000n }, { to: bob.address, amount: 2000n }] }));
-  assert.ok((await fund(HOME)).ok);
-  await until("fans funded", async () => (await balance(bob)) === 2000n);
-  // The artist's card on Moniker: a name, a site that doesn't list them back, a link.
-  const card = { name: "The Band", url: "https://band.invalid", links: [{ label: "Bandcamp", url: "https://band.invalid/music" }] };
-  assert.ok((await send(artist, wallet.writeRequest(PROFILE, { actions: [{ key: `user/${artist.address}/profile`, newValue: JSON.stringify(card) }] }))).ok);
-  await until("the card", async () => (await balance(artist, PROFILE)) < launch.premineAmount(launch.spec()));
-
-  server = spawn("python3", ["-m", "http.server", String(appPort), "--bind", "127.0.0.1"], { cwd: here("../.."), stdio: "ignore" });
-  await until("the page server", () => fetch(`http://127.0.0.1:${appPort}/app/`).then((r) => r.ok), 20);
+  stack = await start({ listen: 25041, rpc: 29390, publicRead: 29391, app: appPort }, process.env.MONIKER);
+  ({ artist, alice, bob } = stack);
   browser = await chromium.launch();
 });
 
 after(async () => {
   await browser?.close();
-  server?.kill();
-  try { lattice("mine", "stop"); } catch {}
-  try { lattice("down"); } catch {}
+  stack?.stop();
 });
 
 let artistPage;
@@ -213,8 +106,8 @@ test("an artist sells from their wallet: a show on sale in five fields", async (
   await artistPage.fill("#nl-price", "250");
   // An image, kept by the artist's own node: set it in Settings, then choose a file.
   await artistPage.click('.image-field [data-act="settings"]');
-  await artistPage.fill("#s-own", `http://127.0.0.1:${rpc}`);
-  await artistPage.fill("#s-cookie", readFileSync(`${root}/chains/Nexus/.cookie`, "utf8").trim());
+  await artistPage.fill("#s-own", stack.rpc);
+  await artistPage.fill("#s-cookie", stack.cookie());
   await artistPage.click('#settings button[type=submit]');
   await artistPage.fill("#nl-title", "Berlin");
   await artistPage.fill("#nl-date", SHOW_DATE);
@@ -287,7 +180,7 @@ test("my tickets: by show date, a door pass to keep, and a resale that shows the
   await row.locator(".pass", { hasText: "until the ticket is checked in" }).waitFor();
   await shot(alicePage, "6-pass");
   // The QR code holds what the wallet signed; the scanner gets the same text.
-  const origin = `http://127.0.0.1:${appPort}`;
+  const origin = stack.origin;
   code = await door.pass({ signMessage: ({ text }) => signMessage(alice, origin, text) }, origin, HOME.join("/"), artist.address, "berlin/1");
   // Signed once: it opens again without asking the wallet.
   const signs = asked.filter((m) => m === "signMessage").length;
@@ -323,7 +216,7 @@ test("the door: pick the show, a good pass is checked in, and it works once", as
   await artistPage.locator(".verdict.bad", { hasText: "already let in at this door" }).waitFor();
   await visit(artistPage, `#/door/${encodeURIComponent(`@${artist.address}`)}/berlin`);
   // A pass link, as a phone shows it, scans the same.
-  await artistPage.fill("#code", `http://127.0.0.1:${appPort}/app/#/pass/${encodeURIComponent(code)}`);
+  await artistPage.fill("#code", `${stack.origin}/app/#/pass/${encodeURIComponent(code)}`);
   await artistPage.click('form[data-act="check-pass"] button[type=submit]');
   await artistPage.locator(".verdict.bad", { hasText: "already checked in" }).waitFor();
 });
