@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { SECONDS, start } from "./stack.mjs";
+import { SECONDS, account, start } from "./stack.mjs";
 
 const built = process.env.LATTICE_WALLET && fileURLToPath(new URL(process.env.LATTICE_WALLET, `file://${process.cwd()}/`));
 if (!built) throw new Error("LATTICE_WALLET: the built Lattice Wallet extension (its dist/ directory)");
@@ -126,9 +126,9 @@ test("a fan buys a ticket: the wallet asks to pay the price", async () => {
   await alice.page.locator('#l-berlin [data-act="buy"]').click();
   await alice.page.click('form[data-act="confirm-buy"] button[type=submit]');
   await status(alice, 'form[data-act="confirm-buy"]', "Done.");
-  // The wallet asks for the same total the page showed: the price and the fee.
-  assert.equal(alice.context.approved.at(-1), "Pay 251");
-  assert.equal(await stack.balance(stack.alice), 2000n - 251n);
+  // The wallet asks for the same total the page showed; this node takes any fee.
+  assert.equal(alice.context.approved.at(-1), "Pay 250");
+  assert.equal(await stack.balance(stack.alice), 2000n - 250n);
 });
 
 test("the fan's wallet signs a door pass, and the artist checks them in", async () => {
@@ -151,4 +151,22 @@ test("the fan's wallet signs a door pass, and the artist checks them in", async 
     throw new Error(`no "Let them in"; wallet approved [${artist.context.approved}], said: ${artist.context.notes.join(" || ") || "nothing"}`, { cause: error });
   });
   assert.equal(artist.context.approved.at(-1), "Sign write");
+});
+
+test("a new artist with no FAN at all puts a show on sale: the fee is 0", async () => {
+  const newcomer = account();
+  assert.equal(await stack.balance(newcomer), 0n);
+  const person = await walletOf(newcomer);
+  await visit(person, "#/sell");
+  await person.page.getByRole("button", { name: "Connect wallet" }).first().click();
+  await person.page.locator("#who .chip").waitFor({ timeout: 60_000 });
+  await person.page.locator("#nl-title").waitFor();
+  assert.equal(await person.page.locator(".note", { hasText: "network fee" }).count(), 0, "no fee to warn about");
+  await person.page.fill("#nl-title", "First gig");
+  await person.page.fill("#nl-date", "2030-12-01");
+  await person.page.fill("#nl-count", "10");
+  await person.page.fill("#nl-price", "20");
+  await person.page.click('form[data-act="create-listing"] button[type=submit]');
+  await status(person, 'form[data-act="create-listing"]', "Done.");
+  assert.deepEqual(person.context.approved, ["Connect", "Sign write"]);
 });

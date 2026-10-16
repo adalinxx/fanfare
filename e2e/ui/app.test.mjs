@@ -153,9 +153,10 @@ test("one button buys a ticket, with the total shown first; a fan who saw it ear
 
   await alicePage.click('#l-berlin [data-act="buy"]');
   const sheet = alicePage.locator('form[data-act="confirm-buy"]');
-  await sheet.locator(".total", { hasText: "251 FAN" }).waitFor();
+  // The node takes any fee, so the total is the price.
+  await sheet.locator(".total", { hasText: "250 FAN" }).waitFor();
   await shot(alicePage, "4-buy");
-  await sheet.locator("button[type=submit]", { hasText: "Pay 251 FAN in wallet" }).click();
+  await sheet.locator("button[type=submit]", { hasText: "Pay 250 FAN in wallet" }).click();
   await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
   await sheet.locator(".after", { hasText: "It's yours" }).waitFor();
 

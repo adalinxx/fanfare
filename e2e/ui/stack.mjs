@@ -31,6 +31,12 @@ export async function until(label, condition, seconds = SECONDS) {
   }
 }
 
+/** A new account, with its private key as hex for the wallet to import. */
+export function account() {
+  const privateKey = sdk.generatePrivateKey();
+  return { ...sdk.accountFromPrivateKey(privateKey), keyHex: Buffer.from(privateKey).toString("hex") };
+}
+
 /** Ed25519 over "lattice-message:" + origin + "\n" + text, as the wallet signs. */
 export async function signMessage(who, origin, text) {
   const pkcs8 = new Uint8Array([...sdk.hexToBytes("302e020100300506032b657004220420"), ...who.privateKey]);
@@ -55,10 +61,6 @@ export async function start(ports, profileDir) {
     const topology = JSON.parse(readFileSync(file, "utf8"));
     change(topology);
     writeFileSync(file, JSON.stringify(topology, null, 2));
-  };
-  const account = () => {
-    const privateKey = sdk.generatePrivateKey();
-    return { ...sdk.accountFromPrivateKey(privateKey), keyHex: Buffer.from(privateKey).toString("hex") };
   };
   const [miner, artist, alice, bob] = [account(), account(), account(), account()];
 

@@ -88,6 +88,21 @@ async function stateOf(chain) {
   return view(volumeLoader(volumes, sdk.decodeDagCbor), generalStateCID);
 }
 
+/**
+ * The fee a write on `chain` pays: the minimum the node admits (its relay
+ * policy, not a chain rule), so 0 where the node takes any fee. Read once.
+ */
+const fees = new Map();
+function feeOf(chain) {
+  const key = chain.join("/");
+  if (!fees.has(key)) {
+    const pending = api("api/chain/info", chain).then((info) => BigInt(info?.minRelayFee ?? 0));
+    pending.catch(() => fees.delete(key));
+    fees.set(key, pending);
+  }
+  return fees.get(key);
+}
+
 const balanceOf = async (address, chain) => BigInt((await api(`api/state/account/${address}`, chain))?.balance ?? 0);
 
 // Show images: a file kept by the artist's own node as a Volume, named in the
@@ -232,14 +247,15 @@ async function perform(chain, w, say) {
       return [];
     }
   };
+  const fee = await feeOf(chain).catch(() => 0n);
   try {
     if (!me) await connect();
     say("Approve it in your wallet…");
-    await wallet.send(lattice(), chain, w);
+    await wallet.send(lattice(), chain, w, fee);
   } catch (error) {
     if (error instanceof Said) return say(error.message, "bad"), false;
     const balance = await balanceOf(me, chain).catch(() => undefined);
-    const why = /refused/i.test(error?.message ?? "") ? (await ask({ balance })).filter((x) => x.reason !== "done") : [];
+    const why = /refused/i.test(error?.message ?? "") ? (await ask({ balance, fee })).filter((x) => x.reason !== "done") : [];
     say(why.length > 0 ? `${why.map((x) => x.text).join(" ")} Nothing was taken from you.` : walletMessage(error), "bad");
     return false;
   }
@@ -357,11 +373,12 @@ async function loadArtist(key) {
   const info = await sellerInfo(key);
   const state = await stateOf(info.chain);
   const { artist } = info;
-  const [card, listings, balance, staff] = await Promise.all([
+  const [card, listings, balance, staff, fee] = await Promise.all([
     cardOf(artist),
     artist ? read.listings(state, artist).then((all) => all.filter((l) => l.kind === "ticket")) : [],
     me ? balanceOf(me, info.chain) : undefined,
     artist ? read.staff(state, artist) : [],
+    feeOf(info.chain).catch(() => 0n),
   ]);
   const withTickets = await Promise.all(
     listings.map(async (listing) => {
@@ -370,7 +387,7 @@ async function loadArtist(key) {
     }),
   );
   const isArtist = me !== null && me === artist;
-  return { ...info, state, card, listings: withTickets, balance, isArtist, staff, label: nameOf(info, card) };
+  return { ...info, state, card, listings: withTickets, balance, isArtist, staff, fee, label: nameOf(info, card) };
 }
 
 async function showArtist(route, id) {
@@ -483,12 +500,12 @@ function buyForm(button) {
   const t = l?.tickets.find((x) => x.id === button.dataset.ticket);
   if (!t) return;
   const card = button.closest(".listing");
-  const fee = 1n;
+  const { fee } = p;
   const used = l.used.has(t.id) ? `<p class="warn-text small">This ticket was already checked in at the door: it won't get anyone in again.</p>` : "";
   const short_ = p.balance !== undefined && p.balance < t.price + fee;
   openForm($(".form-slot", card), `<form class="inline sheet" data-act="confirm-buy" data-listing="${esc(l.name)}" data-ticket="${esc(t.id)}">
     ${t.holder !== p.artist ? `<p class="what muted small">Resold by a fan${l.price ? `, originally ${money(l.price, p.coin)}` : ""}</p>` : ""}
-    <dl class="total"><dt>Price</dt><dd>${money(t.price, p.coin)}</dd><dt>Network fee</dt><dd>${money(fee, p.coin)}</dd><dt>Total</dt><dd><strong>${money(t.price + fee, p.coin)}</strong></dd></dl>
+    ${fee > 0n ? `<dl class="total"><dt>Price</dt><dd>${money(t.price, p.coin)}</dd><dt>Network fee</dt><dd>${money(fee, p.coin)}</dd><dt>Total</dt><dd><strong>${money(t.price + fee, p.coin)}</strong></dd></dl>` : `<dl class="total"><dt>Total</dt><dd><strong>${money(t.price, p.coin)}</strong></dd></dl>`}
     ${used}
     ${short_ ? `<p class="warn-text small">You have ${money(p.balance, p.coin)}, ${money(t.price + fee - p.balance, p.coin)} short.${p.own ? ` <button class="linkish" type="button" data-act="buy-coin">Get ${esc(p.coin)}</button>` : ` <a href="#/me">Get ${FAN}</a>`}</p>` : ""}
     <div class="acts"><button class="btn primary" type="submit"${short_ ? " disabled" : ""}>Pay ${money(t.price + fee, p.coin)} in wallet</button><button class="btn ghost" type="button" data-act="close-form">Cancel</button></div>
@@ -622,14 +639,14 @@ async function showSell(id) {
   page = p;
   main().innerHTML = `<h1>Sell on Fanfare</h1>
     <p class="muted">Fans pay you directly in ${FAN}. ${p.listings.length ? `You have ${plural(p.listings.length, "show")} on <a href="${artistHref(p.key)}">your page</a>.` : ""}</p>
-    ${p.balance === 0n ? `<p class="note">Each write costs a network fee of 1 ${FAN}, and you have none yet. <button class="linkish" type="button" data-act="get-fan">Get ${FAN}</button></p><div id="fan-market" hidden></div>` : ""}
+    ${p.fee > 0n && p.balance < p.fee ? `<p class="note">Each write costs a network fee of ${money(p.fee, FAN)}, and you have ${money(p.balance, FAN)}. <button class="linkish" type="button" data-act="get-fan">Get ${FAN}</button></p><div id="fan-market" hidden></div>` : ""}
     ${p.card.name ? "" : `<p class="note">Fans will see your address until you <a href="${MONIKER_APP}" target="_blank" rel="noopener">add your name and picture on Moniker</a>, the profile every Lattice app reads.</p>`}
     <section class="card">${listingForm(FAN)}</section>
     <p class="small muted">Want a coin of your own, that fans can hold and mine? It's optional, and best once you have fans. <a href="#/launch">Your own coin</a></p>`;
 }
 
 function staffForm() {
-  openForm($(".tools .form-slot"), `<form class="inline" data-act="save-staff"><label for="staff">Their Lattice address</label><input id="staff" name="staff" class="mono" required placeholder="bafyrei…"><p class="small muted">Staff can check tickets in at your door. They pay a fee of 1 for each check-in.</p><div class="acts"><button class="btn primary" type="submit">Add</button><button class="btn ghost" type="button" data-act="close-form">Cancel</button></div><p class="status" hidden></p></form>`);
+  openForm($(".tools .form-slot"), `<form class="inline" data-act="save-staff"><label for="staff">Their Lattice address</label><input id="staff" name="staff" class="mono" required placeholder="bafyrei…"><p class="small muted">Staff can check tickets in at your door, each check-in signed by their own wallet${page.fee > 0n ? ` and paying a fee of ${money(page.fee, page.coin)}` : ""}.</p><div class="acts"><button class="btn primary" type="submit">Add</button><button class="btn ghost" type="button" data-act="close-form">Cancel</button></div><p class="status" hidden></p></form>`);
 }
 
 async function saveStaff(form) {
@@ -1068,6 +1085,7 @@ function saveSettings(form) {
   });
   store.set("settings", settings);
   sellers.clear();
+  fees.clear();
   homePending = undefined;
   verdicts.clear();
   profileState = undefined;
