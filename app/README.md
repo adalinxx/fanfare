@@ -50,7 +50,7 @@ python3 -m http.server 8765   # from the repository root, then open
 
 `vendor/` holds the browser bundle of `@adalinxx/lattice-sdk`
 (`esbuild --bundle --format=esm`, as Stoa's), `qrcode-generator` 2.0.4
-(MIT), and Moniker's `client/profile.mjs` (`~/src/moniker`, commit 0cea0cb). The
+(MIT), and Moniker's `src/records/profile.mjs` (github.com/adalinxx/moniker-sdk, tag v0.1.1). The
 fonts in `fonts/` are Bricolage Grotesque and Instrument Sans (SIL Open Font
 License), shipped with the page so no font host sees who visits.
 `fanfare_policy.wasm` is the built policy, offered at launch; a UI test

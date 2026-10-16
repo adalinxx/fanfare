@@ -8,6 +8,12 @@ Each artist is a chain under `Nexus/fanfare` (for example `Nexus/fanfare/band`),
 and the artist's coin is that chain's coin. The chain is the database; the
 client is the app.
 
+**Trial.** Until `Nexus/fanfare` launches, the app defaults to a trial on
+testnet: home chain `Nexus/testnet/fanfare-a5688b`, profiles on Moniker's
+trial `Nexus/testnet/moniker-da6f57`, read from
+`https://lattice-testnet-apps-iad.fly.dev` (or its twin in `ams`). Settings, or
+`?node=`, `?home=` and `?profile=`, point it elsewhere.
+
 ## Records
 
 ```
@@ -79,8 +85,11 @@ and halve every 210,000 blocks, and the premine is 21,000 blocks' rewards,
 21,000,000 coin, paid to the artist at genesis. Every field is the artist's
 to change, the policy included.
 
+If the node doesn't host the home chain yet, add `Nexus/fanfare` to
+`hostedChains` in its `lattice.json` and run `lattice up` (creating it would
+make a second chain by that name). Then:
+
 ```
-lattice child create Nexus/fanfare            # once, if the node doesn't host it yet
 lattice child create Nexus/fanfare/<name> --spec spec.json \
   --policy-module fanfare_policy.wasm --premine-to <artist address>
 ```

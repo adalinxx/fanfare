@@ -21,7 +21,13 @@ import {
 
 // Settings, kept in this browser only.
 
-const DEFAULTS = { node: "", home: "Nexus/fanfare", profile: "Nexus/moniker", origins: "" };
+// The public trial on testnet; Nexus/fanfare and Nexus/moniker once they launch.
+const DEFAULTS = {
+  node: "https://lattice-testnet-apps-iad.fly.dev",
+  home: "Nexus/testnet/fanfare-a5688b",
+  profile: "Nexus/testnet/moniker-da6f57",
+  origins: "",
+};
 const store = {
   get(key, fallback) {
     try {
@@ -39,8 +45,8 @@ const store = {
 };
 const settings = { ...DEFAULTS, ...store.get("settings", {}) };
 {
-  const asked = new URLSearchParams(location.search).get("node");
-  if (asked) settings.node = asked;
+  const asked = new URLSearchParams(location.search);
+  for (const key of ["node", "home", "profile"]) if (asked.get(key)) settings[key] = asked.get(key);
 }
 const nodeURL = () => settings.node.replace(/\/+$/, "");
 const HOME = () => settings.home.split("/");
@@ -820,7 +826,8 @@ async function launchCommand(form) {
   steps.hidden = false;
   steps.innerHTML = `<p>Your chain starts on your own node, and its first block pays ${coins(launch.premineAmount(spec))} ${esc(name)} to your wallet, <span class="mono">${esc(short(me))}</span>.</p>
     <ol><li>Save <a href="${blob}" download="${esc(file)}">${esc(file)}</a> and <a href="./fanfare_policy.wasm" download>fanfare_policy.wasm</a>.</li>
-    <li>Run, on your node:<pre class="mono">${esc(`lattice child create ${settings.home}   # once, if your node doesn't host it\nlattice ${launch.createArguments({ name, specFile: file, moduleFile: "fanfare_policy.wasm", artist: me, home: HOME() }).join(" ")}`)}</pre></li>
+    <li>If your node doesn't host ${esc(settings.home)} yet, add it to <span class="mono">hostedChains</span> in your <span class="mono">lattice.json</span> and run <span class="mono">lattice up</span>.</li>
+    <li>Run, on your node:<pre class="mono">${esc(`lattice ${launch.createArguments({ name, specFile: file, moduleFile: "fanfare_policy.wasm", artist: me, home: HOME() }).join(" ")}`)}</pre></li>
     <li>Your node mines your chain's first block with its next one. Then <a href="${artistHref(name)}">open your page</a> and put your first show on sale.</li></ol>`;
 }
 

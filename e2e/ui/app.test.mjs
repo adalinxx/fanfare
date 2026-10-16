@@ -31,7 +31,7 @@ const CHAIN = launch.chainPath("band");
 const PROFILE = ["Nexus", "moniker"];
 const [listen, rpc, publicRead, appPort] = [25041, 29390, 29391, 8771];
 const node = `http://127.0.0.1:${publicRead}`;
-const APP = `http://127.0.0.1:${appPort}/app/?node=${encodeURIComponent(node)}`;
+const APP = `http://127.0.0.1:${appPort}/app/?${new URLSearchParams({ node, home: "Nexus/fanfare", profile: "Nexus/moniker" })}`;
 const SECONDS = Number(process.env.E2E_SECONDS ?? 300);
 
 const root = mkdtempSync(`${tmpdir()}/fanfare-ui-`);
