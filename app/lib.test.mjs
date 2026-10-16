@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  ago, amountIn, answerRecord, byDate, coins, dateText, isArtistName, isItemName, newIds, parseRoute, questionStatus, seatOf, sellerAddress, slug, summary, today, walletMessage,
+  amountIn, byDate, coins, dateText, isArtistName, isItemName, newIds, parseRoute, seatOf, sellerAddress, slug, summary, today, walletMessage,
 } from "./lib.mjs";
 
 test("routes", () => {
@@ -18,19 +18,13 @@ test("routes", () => {
   assert.equal(sellerAddress("band"), undefined);
 });
 
-test("listings by date, and a question's status", () => {
+test("listings by date", () => {
   const l = (name, date) => ({ name, ...(date && { date }) });
   const split = byDate([l("a", "2026-12-01"), l("b", "2026-10-01"), l("c"), l("d", "2026-11-01"), l("e", "2026-09-01")], "2026-10-16");
   assert.deepEqual([split.upcoming, split.undated, split.past].map((x) => x.map((y) => y.name)), [["d", "a"], ["c"], ["b", "e"]]);
   assert.equal(today(new Date(2026, 0, 5)), "2026-01-05");
   assert.equal(dateText("2026-11-14"), "Sat 14 Nov 2026");
   assert.equal(dateText("soon"), "");
-  const DAY = 86_400_000;
-  const now = 100 * DAY;
-  const qs = [{ answer: "x", at: 1 }, { at: now - 8 * DAY }, { at: now - 2 * DAY }, {}];
-  assert.deepEqual(qs.map((q) => questionStatus(q, 7, now)), ["answered", "overdue", "waiting", "waiting"]);
-  assert.deepEqual(answerRecord(qs, 7, now), { answered: 1, due: 2 });
-  assert.deepEqual([ago(now, now), ago(now - DAY, now), ago(now - 3 * DAY, now)], ["today", "yesterday", "3 days ago"]);
 });
 
 test("names, amounts and new ticket ids", () => {

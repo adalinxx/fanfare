@@ -10,33 +10,26 @@ wallet (`window.lattice`) to sign: the page keeps no key and has no server.
   artists, by the name on their Moniker profile, with a check mark only when
   the site on that profile lists their address (see the main README, "Who an
   artist is"). Nothing is shown for an artist who hasn't set that up.
-- **Sell** (`#/sell`) puts a show, merch or paid questions on sale from the
-  connected wallet on the Fanfare chain: a title, a date and venue, how many
+- **Sell** (`#/sell`) puts a show on sale from the connected wallet on the
+  Fanfare chain: a title, a date and venue, how many
   and a price, minted in one write. It then links the artist's page.
 - **An artist's page** (`#/a/<name>` for their own coin's chain,
-  `#/a/@<address>` on the Fanfare chain) shows their shows by date, Q&A and
-  merch. One button buys the cheapest ticket still good; resales are listed
-  with what the ticket cost new. A ticket already checked in, or a slot
-  already answered, is marked, and a buyer is warned. A Q&A listing says how
-  many days the artist aims to answer in and their record so far.
-  Buying a Q&A slot asks the question in the same write; buying merch seals
-  the shipping address to the artist in the same write. An artist with their
+  `#/a/@<address>` on the Fanfare chain) shows their shows by date. One
+  button buys the cheapest ticket still good; resales are listed with what
+  the ticket cost new. A ticket already checked in is marked, and a buyer is
+  warned. An artist with their
   own coin has a coin panel: what it's for, that its price can fall to
   nothing, and the market's offers, handed to the wallet as a
-  `lattice://order`. The artist sees their own tools here: what needs doing
-  (questions to answer, orders to ship), new listings, door staff, and
-  shipping addresses, opened with a key their wallet derives and marked
-  shipped.
-- **My tickets** (`#/me`) is what the connected account holds, by upcoming
-  show, question and merch: a door pass as a QR code, a resale price, or
+  `lattice://order`. The artist sees their own tools here: their link, new
+  shows, door staff, and how to show fans it's really them.
+- **My tickets** (`#/me`) is every ticket the connected account holds, by
+  show date: a door pass as a QR code, a resale price, or
   giving it to an @handle or address, confirmed by name. A pass is signed
   once and kept in the browser; it can be saved as an image or opened on a
   phone from a second QR code (`#/pass/<pass>`, which needs no wallet).
 
-A door pass and the artist's shipping key are both signed for the site the
-page runs on. A door accepts passes from its own site and any Fanfare sites
-listed in Settings. An artist who opens addresses on another site gets
-another key, and the page says so before replacing the published one.
+A door pass is signed for the site the page runs on. A door accepts passes
+from its own site and any Fanfare sites listed in Settings.
 - **Door** (`#/door/<artist>/<show>`) is one show's door. It reads a pass
   (or a pass link) from the camera (where the browser has
   `BarcodeDetector`) or pasted, checks it is for this show, signed by the

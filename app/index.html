@@ -78,26 +78,14 @@ main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
 .seats li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .price { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-deep); }
-.qa .q, form.q { padding: 10px 0; border-top: 1px solid var(--line); }
-.ask { margin: 0; font-weight: 500; }
-.answer { margin: 4px 0 0; color: var(--soft-ink); padding-left: 12px; border-left: 3px solid var(--accent-soft); }
 .tools .tool-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
-.addresses { padding-left: 18px; }
-.addresses li { margin: 6px 0; }
 form.inline { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 form.inline label, form.launch label { font-size: 14px; font-weight: 600; }
 input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
 textarea { resize: vertical; }
-fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
-legend { font-size: 14px; font-weight: 600; padding: 0 4px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .row > * { flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; }
 .acts { display: flex; gap: 8px; flex-wrap: wrap; }
-.kinds { display: flex; gap: 8px; flex-wrap: wrap; }
-.pill { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-strong); cursor: pointer; font-weight: 500; }
-.pill input { position: absolute; opacity: 0; width: 1px; }
-.pill:has(input:checked) { background: var(--ink); color: var(--bg); border-color: var(--ink); }
-.pill:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .status { margin: 0; font-size: 14px; color: var(--muted); }
 .status.good { color: var(--good); }
 .status.bad { color: var(--bad); }
@@ -132,7 +120,6 @@ dialog form { display: flex; flex-direction: column; gap: 8px; }
 .when b { font: 600 15px var(--display); }
 .when span { font-size: 12px; }
 .buy-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
-.promise { margin: 8px 0 0; color: var(--soft-ink); }
 details > summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-top: 10px; }
 details.past, details.resales { margin-top: 12px; }
 .sheet .what { margin: 0; }
@@ -140,8 +127,6 @@ details.past, details.resales { margin-top: 12px; }
 .total dt { color: var(--muted); }
 .total dd { margin: 0; text-align: right; }
 .good-text { color: var(--good); }
-.todo { margin: 8px 0; padding-left: 18px; }
-.todo li { margin: 4px 0; }
 .verify p { margin: 8px 0 0; }
 .consider ul { padding-left: 18px; margin: 8px 0 0; }
 .consider li { margin: 4px 0; }
@@ -150,10 +135,7 @@ details.past, details.resales { margin-top: 12px; }
 #fan-market { flex-basis: 100%; }
 .coin { display: block; }
 .coin h2 { font-size: 18px; }
-.check { display: flex; gap: 8px; align-items: center; font-weight: 400 !important; }
-.check input { width: auto; }
 .held-head { display: flex; justify-content: space-between; gap: 12px; }
-.addresses li.done { opacity: .7; }
 .to-phone svg { width: 160px; height: auto; background: #fff; border-radius: 8px; margin-top: 8px; }
 .pass.full { padding-top: 16px; }
 .pass.full svg { width: min(420px, 100%); }

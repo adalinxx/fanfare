@@ -61,7 +61,7 @@ export function holding(holder, price) {
 // Artist.
 
 /**
- * A listing `{ kind, title, venue?, date?, media?, closed? }` named by one
+ * A listing `{ kind: "ticket", title, venue?, date?, price?, media?, closed? }` named by one
  * path segment. It can be edited and closed, never deleted.
  */
 export const listing = (artist, name, value) => [[`item/${artist}/${name}`, json(value)]];
@@ -77,31 +77,6 @@ export const mint = (artist, id, { to = artist, price } = {}) => [
 
 /** The artist trusts `staff` to check tickets in, or stops with `trusted` false. */
 export const staff = (artist, s, trusted = true) => [[`user/${artist}/staff/${s}`, trusted ? "1" : undefined]];
-
-/** The artist marks merch item `id` shipped. */
-export const shipped = (artist, id) => [[`user/${artist}/shipped/${id}`, "1"]];
-
-/**
- * The artist's answer to `question` (the question record's value, read.mjs
- * `questions`), asked on ticket `id`. The answer names
- * the question, so if the slot is sold on and asks something new, the old
- * answer doesn't count for it.
- */
-export const answer = (artist, id, question, text) => [[`user/${artist}/answer/${id}`, json({ question, answer: text })]];
-
-// Fan.
-
-/**
- * The question `fan` asks on the Q&A slot `id` they hold, asked `at` (Unix
- * milliseconds), so fans and the artist see how long it has waited.
- */
-export const question = (fan, artist, id, text, at = Date.now()) => [[`user/${fan}/question/${artist}/${id}`, json({ text, at })]];
-
-/**
- * Where `fan` ships merch ticket `id` to: `sealed`, from ship.mjs `seal`, so
- * only the artist reads it.
- */
-export const ship = (fan, artist, id, sealed) => [[`user/${fan}/ship/${artist}/${id}`, sealed]];
 
 // Door.
 

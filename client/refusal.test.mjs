@@ -70,9 +70,9 @@ test("what the policy refuses on a ticket that hasn't changed", async () => {
 
 test("records owned by someone else, a deleted listing, and too little coin", async () => {
   const c = await show();
-  const answer = { actions: await write.changes(c.state, write.answer(ARTIST, "qa/1", "q?", "hi")) };
-  assert.ok(!c.submit(BOB, answer.actions));
-  assert.deepEqual(await reasons(c, answer, BOB), ["not-yours"]);
+  const staff = { actions: await write.changes(c.state, write.staff(ARTIST, BOB)) };
+  assert.ok(!c.submit(BOB, staff.actions));
+  assert.deepEqual(await reasons(c, staff, BOB), ["not-yours"]);
   const checkin = { actions: await write.changes(c.state, write.checkin(ARTIST, ARTIST, "berlin/A1")) };
   assert.ok(!c.submit(BOB, checkin.actions));
   assert.deepEqual(await reasons(c, checkin, BOB), ["not-yours"]);
@@ -90,12 +90,12 @@ test("records owned by someone else, a deleted listing, and too little coin", as
 test("a write landed only when every action reads as written", async () => {
   const c = await show();
   const seat2 = await seat(c, "berlin/A2");
-  // A fan asks the same text they asked before: that action already reads as
-  // written, but the purchase beside it hasn't landed.
-  assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "berlin/A2", "Q")));
+  // A fan writes a record of theirs again as it already stands: that action
+  // already reads as written, but the purchase beside it hasn't landed.
+  const note = `user/${ALICE}/note`;
+  assert.ok(await c.write(ALICE, [[note, "1"]]));
   const w = write.buy(seat2, ALICE);
-  const asked = await c.state.get(`user/${ALICE}/question/${ARTIST}/berlin/A2`);
-  w.actions.push({ key: `user/${ALICE}/question/${ARTIST}/berlin/A2`, oldValue: asked, newValue: asked });
+  w.actions.push({ key: note, oldValue: "1", newValue: "1" });
   const pending = await explain(c.state, w, ALICE);
   assert.deepEqual(pending.map((x) => x.reason), ["done"]);
   assert.ok(!landed(w, pending));

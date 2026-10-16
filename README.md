@@ -1,14 +1,13 @@
 # Fanfare
 
-Artists sell show tickets, merch and paid questions straight from their
-wallet. Tickets and other purchases are tokens that their holders can
-transfer and resell. The chain is the database; the client is the app.
+Artists sell show tickets straight from their wallet. Each ticket is a token
+its holder can keep, give away or resell. The chain is the database; the client is the app.
 
 Most artists sell on the Fanfare chain itself, `Nexus/fanfare`, priced in its
 coin (FAN), with nothing to set up: the policy names every seller by address.
 An artist whose fans want to hold something of theirs can also launch their
 own coin: a chain under `Nexus/fanfare` (for example `Nexus/fanfare/band`)
-whose coin fans can mine, buy and spend on what the artist prices in it.
+whose coin fans can mine, buy and spend on tickets the artist prices in it.
 Both run the same records and policy.
 
 **Trial.** Until `Nexus/fanfare` launches, the app defaults to a trial on
@@ -20,23 +19,14 @@ trial `Nexus/testnet/moniker-da6f57`, read from
 ## Records
 
 ```
-item/<artist>/<name>                        listing: {kind, title, venue, date, media, price, answerWithin, closed?}
-user/<artist>/answer/<id>        {question, answer}: the artist's answer to the question it names
+item/<artist>/<name>                        a show: {kind: "ticket", title, venue, date, media, price, closed?}
 user/<artist>/staff/<staff>                 a door staff key the artist trusts
-user/<artist>/shipped/<id>                  a merch item the artist shipped
 index/checkin/<artist>/<id>/<staff>   ticket used at the door
 
 own/<artist>/<id>                           a ticket; value = <holder> or <holder>@<price>
-
-user/<fan>/question/<artist>/<id>   {text, at}: the question, and when (the asker's clock)
-user/<fan>/ship/<artist>/<id>       shipping address, encrypted to the artist
 ```
 
-A listing's `price` is what its tickets cost new, so a resale can show it;
-`answerWithin` is how many days the artist promises to answer a paid
-question in (7 when unset). Fanfare shows that window and the artist's record
-so far before a fan buys, and marks a question overdue after it. It promises
-no refund: the fan pays up front, and the asker's clock dates the question.
+A show's `price` is what its tickets cost new, so a resale can show it.
 
 Each ticket is its own token, named by the artist, for example
 `berlin-night-1/A12`; a show's tickets share its listing's name as a prefix.
@@ -44,15 +34,11 @@ A listing's name is one path segment, so one listing's tickets never sit
 inside another's; the client ignores a listing named with a "/".
 The artist mints tickets, usually at a price (`<artist>@250`); a fan buys one
 by paying that price, and can transfer it or sell it again at any price,
-forever. Prices are plain decimals with no leading zeros. A Q&A session is a
-listing whose tickets are question slots; merch is a listing whose tickets
-are the items, and the holder of one leaves a shipping address sealed to the
-artist.
+forever. Prices are plain decimals with no leading zeros.
 
 Profiles are not on artist chains: an artist's name, picture and site are
 their card on the shared profile chain, `Nexus/moniker` (Moniker, github.com/adalinxx/moniker),
-keyed by address like every app's. Fanfare adds one field there,
-`app.fanfare.x25519`, the key fans seal shipping addresses to.
+keyed by address like every app's.
 
 ## Who an artist is
 
@@ -115,11 +101,11 @@ pays the premine to `--premine-to`. Names are first come.
 - `state.mjs` reads state from any node, verifying every trie node by CID,
   reads the chain's spec from the tip block, and finds the artist in the
   genesis block (`premineRecipient`).
-- `read.mjs` reads listings, tickets, a fan's tickets, check-ins, Q&A and
-  shipping records, and `runsFanfare(spec)` tells the Fanfare policy from a
+- `read.mjs` reads shows, tickets, a fan's tickets and check-ins, and
+  `runsFanfare(spec)` tells the Fanfare policy from a
   custom one.
 - `write.mjs` builds the writes: listings, minting, buying, pricing,
-  transfers, questions, answers, staff and check-ins. A ticket change names
+  transfers, staff and check-ins. A ticket change names
   the value the writer read, so a stale view is refused, never misapplied.
 - `launch.mjs` is the default spec, its premine and the create command.
 - `wallet.mjs` turns a write into a request for the Lattice wallet
@@ -132,9 +118,6 @@ pays the premine to `--premine-to`. Names are first come.
   else, price changed, not yours to change, not enough coin, ...). The node
   answers every refusal with the same `invalidState`.
 - `verify.mjs` is the name check above.
-- `ship.mjs` seals a shipping address to the artist. The artist's key comes
-  from their wallet signing a fixed text, so Fanfare stores no key and the
-  same account always gets the same key back.
 - `door.mjs` is the door check: the holder's wallet signs a pass for the
   chain and the ticket (`signMessage`, bound to Fanfare's origin), shown as
   a QR code. It has no time limit, so a fan can keep it on their phone. The
@@ -158,15 +141,14 @@ The real-node tests (each file's header has the command):
 - `e2e/journey.mjs` runs the whole journey on two nodes. The artist's node
   launches the chain; a fan's node joins it while running, and every fan
   write goes through it. A fan buys the coin on the market, buys a ticket and
-  resells it, a late buyer is told why theirs failed, a paid question is
-  answered, a shirt ships to an address only the artist opens, and the
-  holder is checked in at the door.
+  resells it, a late buyer is told why theirs failed, and the holder is
+  checked in at the door.
 
 ## Web app
 
 `app/` is Fanfare in the browser: a static page over `client/` that reads
 every record by CID from a node and has the Lattice wallet sign. See
-`app/README.md`. It needs a browser with Ed25519 and X25519 in WebCrypto
+`app/README.md`. It needs a browser with Ed25519 in WebCrypto
 (Chrome 137+, Firefox 130+, Safari 17+). The UI tests in `e2e/ui/` drive it
 in headless Chromium against a private node.
 

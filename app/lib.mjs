@@ -59,9 +59,6 @@ export const isItemName = (name) => typeof name === "string" && /^[A-Za-z0-9_-]+
 export const slug = (title) =>
   String(title).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "listing";
 
-/** What a listing's tickets are called. */
-export const unitOf = (kind) => (kind === "qa" ? ["question slot", "question slots"] : kind === "merch" ? ["item", "items"] : ["ticket", "tickets"]);
-
 /**
  * The ids of `count` new tickets for listing `name`, numbered after any it
  * already has: `name/1`, `name/2`, ...
@@ -80,7 +77,7 @@ export function newIds(name, existing, count) {
 /**
  * A listing's tickets as the page shows them: how many exist, how many fans
  * hold, and the ones for sale, cheapest first (the artist's and resales).
- * `used` are ids already used up (checked in, or a slot already answered):
+ * `used` are ids already checked in at the door:
  * they stay listed, marked, but don't count as the cheapest.
  */
 export function summary(listing, tickets, used = new Set()) {
@@ -140,34 +137,4 @@ export function dateText(date) {
   const [y, m, d] = date.split("-").map(Number);
   const day = new Date(y, m - 1, d);
   return `${"Sun Mon Tue Wed Thu Fri Sat".split(" ")[day.getDay()]} ${d} ${"Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ")[m - 1]} ${y}`;
-}
-
-const DAY = 24 * 60 * 60 * 1000;
-/** The answer window a Q&A listing promises when it doesn't say: 7 days. */
-export const ANSWER_WITHIN = 7;
-
-/**
- * Where a question (read.mjs `questions`) stands: "answered", "overdue" once
- * `days` have passed since it was asked, or "waiting". A question with no
- * time is never overdue.
- */
-export function questionStatus(q, days = ANSWER_WITHIN, now = Date.now()) {
-  if (q.answer !== undefined) return "answered";
-  return q.at !== undefined && now - q.at > days * DAY ? "overdue" : "waiting";
-}
-
-/**
- * An artist's record on paid questions: of those answered or overdue,
- * how many were answered. `{ answered, due }`.
- */
-export function answerRecord(questions, days = ANSWER_WITHIN, now = Date.now()) {
-  const statuses = questions.map((q) => questionStatus(q, days, now));
-  const answered = statuses.filter((s) => s === "answered").length;
-  return { answered, due: answered + statuses.filter((s) => s === "overdue").length };
-}
-
-/** How long ago `at` (Unix ms) was, roughly: "today", "3 days ago". */
-export function ago(at, now = Date.now()) {
-  const days = Math.floor((now - at) / DAY);
-  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
 }

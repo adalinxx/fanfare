@@ -198,7 +198,7 @@ let alicePage;
 const ME = () => `#/a/${encodeURIComponent(`@${artist.address}`)}`;
 const SHOW_DATE = "2030-11-14";
 
-test("an artist sells from their wallet: a show on sale in four fields", async () => {
+test("an artist sells from their wallet: a show on sale in five fields", async () => {
   artistPage = await person(artist);
   await visit(artistPage, "#/sell");
   await artistPage.locator("h1", { hasText: "Sell on Fanfare" }).waitFor();
@@ -324,88 +324,22 @@ test("a used ticket still on resale is marked, and a buyer is warned", async () 
   await bobPage.context().close();
 });
 
-test("paid questions: the answer window shown before buying; the artist sees it to do and answers", async () => {
-  await visit(artistPage, ME());
-  await artistPage.click('.head-acts [data-act="new-listing"]');
-  await artistPage.check('input[name=kind][value=qa]');
-  await artistPage.locator("#nl-days").waitFor();
-  await artistPage.fill("#nl-title", "Ask me anything");
-  await artistPage.fill("#nl-count", "2");
-  await artistPage.fill("#nl-price", "50");
-  await artistPage.fill("#nl-days", "3");
-  await artistPage.click('form[data-act="create-listing"] button[type=submit]');
-  await status(artistPage, 'form[data-act="create-listing"]', "Done.");
-
-  await visit(alicePage, ME());
-  await alicePage.locator("#l-ask-me-anything .promise", { hasText: "within 3 days" }).filter({ hasText: "no refund" }).waitFor();
-  await alicePage.click('#l-ask-me-anything [data-act="buy"]');
-  await alicePage.fill("#ask", "What's the next album called?");
-  await alicePage.click('form[data-act="confirm-buy"] button[type=submit]');
-  await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
-
-  await visit(artistPage, ME());
-  await artistPage.locator(".todo", { hasText: "1 question to answer" }).waitFor({ timeout: 30_000 });
-  const form = artistPage.locator('form[data-act="answer"]');
-  await form.filter({ hasText: "asked today" }).waitFor();
-  await form.locator("textarea").fill("Fanfare.");
-  await form.locator("button[type=submit]").click();
-  await status(artistPage, 'form[data-act="answer"]', "Done.");
-  await artistPage.locator(".qa .answer", { hasText: "Fanfare." }).waitFor({ timeout: 30_000 });
-  await shot(artistPage, "9-qa");
-
+test("a gift is confirmed by name before the wallet asks", async () => {
   await visit(alicePage, "#/me");
-  await alicePage.locator("li", { hasText: "What's the next album called?" }).locator(".answer", { hasText: "Fanfare." }).waitFor();
-});
-
-test("merch: an address only the artist opens, marked shipped, and a gift confirmed by name", async () => {
-  await visit(artistPage, ME());
-  await artistPage.click('.head-acts [data-act="new-listing"]');
-  await artistPage.check('input[name=kind][value=merch]');
-  await artistPage.fill("#nl-title", "Tour shirt");
-  await artistPage.fill("#nl-count", "1");
-  await artistPage.fill("#nl-price", "30");
-  await artistPage.click('form[data-act="create-listing"] button[type=submit]');
-  await status(artistPage, 'form[data-act="create-listing"]', "Done.");
-  await visit(artistPage, ME());
-  await artistPage.click('.tool-row [data-act="shipping"]');
-  await artistPage.click('[data-act="publish-key"]');
-  await status(artistPage, "#shipping", "Done.");
-
-  await visit(alicePage, ME());
-  await alicePage.click('#l-tour-shirt [data-act="buy"]');
-  const form = alicePage.locator('form[data-act="confirm-buy"]');
-  await form.locator("[name=name]").fill("Alice");
-  await form.locator("[name=line1]").fill("1 Main St");
-  await form.locator("[name=city]").fill("Berlin");
-  await form.locator("[name=country]").fill("Germany");
-  await shot(alicePage, "10-merch");
-  await form.locator("button[type=submit]").click();
-  await status(alicePage, 'form[data-act="confirm-buy"]', "Done.");
-
-  await visit(artistPage, ME());
-  await artistPage.locator(".todo", { hasText: "1 order to ship" }).waitFor({ timeout: 30_000 });
-  await artistPage.click('.tool-row [data-act="shipping"]');
-  const order = artistPage.locator(".addresses li", { hasText: "1 Main St" });
-  await order.waitFor();
-  await shot(artistPage, "11-addresses");
-  await order.locator('[data-act="mark-shipped"]').click();
-  await order.locator(".good-text", { hasText: "Shipped" }).waitFor({ timeout: SECONDS * 1000 });
-
-  await visit(alicePage, "#/me");
-  const item = alicePage.locator('li[data-ticket="tour-shirt/1"]');
-  await item.locator(".good-text", { hasText: "Shipped" }).waitFor();
-  await item.locator('[data-act="give"]').click();
-  await item.locator("#to").fill(bob.address);
-  await item.locator("button[type=submit]").click();
-  await item.locator(".status", { hasText: "you can't take it back" }).waitFor();
-  await item.locator("button[type=submit]", { hasText: "Give to" }).click();
+  const row = alicePage.locator('li[data-ticket="berlin/1"]');
+  await row.locator('[data-act="give"]').click();
+  await row.locator("#to").fill(bob.address);
+  await row.locator("button[type=submit]").click();
+  await row.locator(".status", { hasText: "you can't take it back" }).waitFor();
+  await shot(alicePage, "9-give");
+  await row.locator("button[type=submit]", { hasText: "Give to" }).click();
   await status(alicePage, 'form[data-act="give-confirm"]', "Done.");
 
   // At phone width nothing scrolls sideways.
   await artistPage.setViewportSize({ width: 390, height: 844 });
   await visit(artistPage, ME());
   await artistPage.locator("#l-berlin").waitFor();
-  await shot(artistPage, "12-phone");
+  await shot(artistPage, "10-phone");
   const wide = await artistPage.evaluate(() =>
     [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > 391).map((el) => `${el.tagName}.${el.className}`).slice(0, 5));
   assert.deepEqual(wide, [], "nothing runs past the right edge");

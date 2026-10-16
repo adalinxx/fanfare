@@ -163,45 +163,6 @@ test("closing a listing and taking unsold tickets off sale", async () => {
   assert.ok(!(await c.write(ARTIST, write.listing(ARTIST, "berlin", undefined))));
 });
 
-test("a paid question: the slot's holder asks, the artist answers", async () => {
-  const c = await show();
-  assert.ok(
-    await c.write(ARTIST, [
-      ...write.listing(ARTIST, "qa-oct", { kind: "qa", title: "Ask me anything", price: "50", answerWithin: 7 }),
-      ...write.mint(ARTIST, "qa-oct/1", { price: 50n }),
-      ...write.mint(ARTIST, "qa-oct/2", { price: 50n }),
-    ]),
-  );
-  assert.ok(c.submit(ALICE, ...Object.values(write.buy(await read.ticket(c.state, ARTIST, "qa-oct/1"), ALICE))));
-  assert.ok(await c.write(ALICE, write.question(ALICE, ARTIST, "qa-oct/1", "First gig?", 1_800_000_000_000)));
-  // A question on a slot the asker doesn't hold doesn't count.
-  assert.ok(await c.write(BOB, write.question(BOB, ARTIST, "qa-oct/2", "Free question?")));
-  assert.deepEqual(
-    (await read.questions(c.state, ARTIST, "qa-oct")).map(({ ticket, text, answer }) => [ticket.id, text, answer]),
-    [["qa-oct/1", "First gig?", undefined]],
-  );
-  const [first] = await read.questions(c.state, ARTIST, "qa-oct");
-  assert.equal(first.at, 1_800_000_000_000);
-  // The answer names the question as stored, so it can't be matched to the bare text.
-  assert.ok(await c.write(ARTIST, write.answer(ARTIST, "qa-oct/1", "First gig?", "Wrong match.")));
-  assert.equal((await read.questions(c.state, ARTIST, "qa-oct"))[0].answer, undefined);
-  assert.ok(await c.write(ARTIST, write.answer(ARTIST, "qa-oct/1", first.value, "A basement in Leipzig.")));
-  assert.equal((await read.questions(c.state, ARTIST, "qa-oct"))[0].answer, "A basement in Leipzig.");
-  const qa = await read.listing(c.state, ARTIST, "qa-oct");
-  assert.deepEqual([qa.kind, qa.price, qa.answerWithin], ["qa", 50n, 7]);
-  assert.deepEqual(read.asked("plain text"), { text: "plain text" });
-
-  // Alice sells the slot on; Bob asks something new, and the old answer isn't his.
-  const slot = await read.ticket(c.state, ARTIST, "qa-oct/1");
-  assert.ok(c.submit(ALICE, [write.price(slot, 60n)]));
-  assert.ok(c.submit(BOB, ...Object.values(write.buy(await read.ticket(c.state, ARTIST, "qa-oct/1"), BOB))));
-  assert.ok(await c.write(BOB, write.question(BOB, ARTIST, "qa-oct/1", "Next album?")));
-  assert.deepEqual(
-    (await read.questions(c.state, ARTIST, "qa-oct")).map(({ text, answer }) => [text, answer]),
-    [["Next album?", undefined]],
-  );
-});
-
 test("the door: the holder's pass gets them in once, and only trusted staff check in", async () => {
   const c = await show();
   const fan = sdk.accountFromPrivateKey(sdk.generatePrivateKey());
@@ -225,11 +186,11 @@ test("the door: the holder's pass gets them in once, and only trusted staff chec
   // The ticket is for Berlin, not for another show or a Q&A.
   assert.ok(await c.write(ARTIST, write.listing(ARTIST, "paris", { kind: "ticket", title: "Paris" })));
   assert.equal(await verdict(await passOf(fan), await read.listing(c.state, ARTIST, "paris")), "other-show");
-  assert.equal(await verdict(await passOf(fan), { ...berlin, kind: "qa" }), "other-show");
+  assert.equal(await verdict(await passOf(fan), { ...berlin, kind: "other" }), "other-show");
   assert.ok(door.inListing("berlin", "berlin") && door.inListing("berlin", "berlin/A1") && !door.inListing("berlin", "berlin-2/A1"));
   // A listing named inside another's tickets isn't a listing Fanfare shows, so no door is opened for it.
-  assert.ok(await c.write(ARTIST, write.listing(ARTIST, "berlin/shirts", { kind: "merch", title: "Shirts" })));
-  assert.equal(await read.listing(c.state, ARTIST, "berlin/shirts"), undefined);
+  assert.ok(await c.write(ARTIST, write.listing(ARTIST, "berlin/late", { kind: "ticket", title: "Late show" })));
+  assert.equal(await read.listing(c.state, ARTIST, "berlin/late"), undefined);
   assert.ok(!(await read.listings(c.state, ARTIST)).some((l) => l.name.includes("/")));
   assert.equal(await verdict(await passOf(fan, { id: "berlin/A1" })), "no-ticket", "a pass for another ticket");
   const scanned = await passOf(fan);
@@ -287,16 +248,13 @@ test("an artist chain is created under the home chain with the premine to the ar
   for (const name of ["", "a/b", undefined]) assert.throws(() => launch.chainPath(name));
 });
 
-test("the shared chain: every artist's listings, and merch marked shipped", async () => {
+test("the shared chain: every artist's listings, and every ticket a fan holds", async () => {
   const c = await show();
   assert.ok(await c.write(BOB, write.listing(BOB, "leipzig", { kind: "ticket", title: "Leipzig", price: "20" })));
   assert.deepEqual(
     (await read.allListings(c.state)).map((l) => [l.artist, l.name]).sort(),
     [[ARTIST, "berlin"], [BOB, "leipzig"]].sort(),
   );
-  assert.ok(await c.write(ARTIST, write.shipped(ARTIST, "shirts/1")));
-  assert.ok(!(await c.write(BOB, write.shipped(ARTIST, "shirts/2"))), "only the artist marks their merch shipped");
-  assert.deepEqual([...(await read.shipped(c.state, ARTIST))], ["shirts/1"]);
   assert.ok(await c.write(BOB, write.mint(BOB, "leipzig/1", { to: ALICE })));
   assert.ok((await read.heldAll(c.state, ALICE)).some((t) => t.artist === BOB && t.id === "leipzig/1"));
 });

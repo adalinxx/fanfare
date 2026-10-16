@@ -6,9 +6,8 @@
 // `window.lattice` and signed the way the wallet signs them.
 //
 // Alice buys the artist's coin on the market, buys a ticket, and resells it
-// to Bob, whose earlier try at the same ticket the client explains. She buys
-// a Q&A slot and asks; the artist answers. She buys a shirt and leaves a
-// shipping address only the artist opens. At the door, Bob's wallet
+// to Bob, whose earlier try at the same ticket the client explains. At the
+// door, Bob's wallet
 // signs a pass, the artist's staff checks him in, and the pass won't work twice.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
@@ -23,7 +22,6 @@ import * as launch from "../client/launch.mjs";
 import * as market from "../client/market.mjs";
 import * as read from "../client/read.mjs";
 import { explain } from "../client/refusal.mjs";
-import * as ship from "../client/ship.mjs";
 import { chainSpec, premineRecipient, tip, view, volumeLoader } from "../client/state.mjs";
 import * as wallet from "../client/wallet.mjs";
 import * as write from "../client/write.mjs";
@@ -179,22 +177,17 @@ try {
   }
   console.log("a fan's node joined the artist chain while running; from it the client finds the artist in the genesis and the Fanfare policy in the spec");
 
-  // The artist sets up from their own node: a show, a Q&A, a shirt, staff.
-  const artistKey = await ship.artistKey(walletOf(artist));
+  // The artist sets up from their own node: a show and door staff.
   await lands("the artist's setup", artist, {
     actions: await write.changes(await state(artistNode), [
       ...write.listing(artist.address, SHOW, { kind: "ticket", title: "Berlin", venue: "Tresor", date: "2026-12-01" }),
       ...write.mint(artist.address, `${SHOW}/A1`, { price: 250n }),
       ...write.mint(artist.address, `${SHOW}/A2`, { price: 250n }),
-      ...write.listing(artist.address, "qa", { kind: "qa", title: "Ask me anything" }),
-      ...write.mint(artist.address, "qa/1", { price: 100n }),
-      ...write.listing(artist.address, "shirt", { kind: "merch", title: "Tour shirt" }),
-      ...write.mint(artist.address, "shirt/1", { price: 30n }),
       ...write.staff(artist.address, staff.address),
     ]),
     payments: [{ to: bob.address, amount: 1000n }, { to: staff.address, amount: 10n }],
-  }, async () => (await ticketOf("shirt/1"))?.price === 30n, artistNode);
-  console.log("the artist listed a show, a Q&A and a shirt, named door staff, and sent Bob 1000 band and staff 10 for fees");
+  }, async () => (await ticketOf(`${SHOW}/A2`))?.price === 250n, artistNode);
+  console.log("the artist listed a show, named door staff, and sent Bob 1000 band and staff 10 for fees");
 
   // Alice buys the artist's coin with Fanfare coin, through the fan's node.
   const [coin, asked, swap] = [5000n, 300n, ["--swap-nonce", "1", "--demand", "300"]];
@@ -233,26 +226,6 @@ try {
   assert.equal(await balance(alice), aliceBefore + 400n);
   console.log("Alice resold A1 to Bob at 400; she was paid in the same transaction");
 
-  // Q&A: Alice buys the slot and asks in one write; the artist answers.
-  const slot = await ticketOf("qa/1");
-  const ask = write.buy(slot, alice.address);
-  ask.actions.push(...(await write.changes(await state(), write.question(alice.address, artist.address, "qa/1", "What's the next album called?"))));
-  await lands("Alice asks", alice, ask, async () => (await read.questions(await state(), artist.address, "qa")).length === 1);
-  const [question] = await read.questions(await state(artistNode), artist.address, "qa");
-  await lands("the artist answers", artist, { actions: await write.changes(await state(artistNode), write.answer(artist.address, "qa/1", question.value, "Fanfare.")) },
-    async () => (await read.questions(await state(), artist.address, "qa"))[0]?.answer === "Fanfare.", artistNode);
-  console.log("Alice paid 100 for a question; the artist answered it");
-
-  // Merch: Alice buys the shirt and leaves an address sealed to the artist.
-  const address = { name: "Alice", line1: "1 Main St", city: "Berlin", country: "DE" };
-  const shirt = write.buy(await ticketOf("shirt/1"), alice.address);
-  shirt.actions.push(...(await write.changes(await state(), write.ship(alice.address, artist.address, "shirt/1", await ship.seal(artistKey.publicKey, address)))));
-  await lands("Alice buys the shirt", alice, shirt, async () => (await read.shipments(await state(), artist.address, "shirt")).length === 1);
-  const [shipment] = await read.shipments(await state(artistNode), artist.address, "shirt");
-  assert.ok(!shipment.sealed.includes("Main St"));
-  assert.deepEqual(await ship.open((await ship.artistKey(walletOf(artist))).privateKey, shipment.sealed), address);
-  console.log("Alice bought the shirt; only the artist's wallet opens her address");
-
   // The door: Bob's wallet signs a pass for A1; Alice's can't stand in for it.
   const ticket = await ticketOf(`${SHOW}/A1`);
   const show = await read.listing(await state(), artist.address, SHOW);
@@ -266,7 +239,7 @@ try {
   assert.equal((await atDoor(bob)).reason, "used");
   console.log("at the door Bob's pass let him in, Alice's didn't, and once checked in his pass is turned away");
 
-  assert.deepEqual((await read.held(await state(), artist.address, alice.address)).map((t) => t.id), ["qa/1", "shirt/1"]);
+  assert.deepEqual((await read.held(await state(), artist.address, alice.address)).map((t) => t.id), []);
   assert.deepEqual((await read.held(await state(), artist.address, bob.address)).map((t) => t.id), [`${SHOW}/A1`]);
   console.log("the journey reads back the same from the fan's node");
 } finally {

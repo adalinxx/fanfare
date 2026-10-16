@@ -115,8 +115,6 @@ const asListing = (artist, name, value) => {
     ...text("media"),
     // The artist's own price for its tickets, so a resale can show what it cost first.
     ...(typeof record.price === "string" && /^[1-9][0-9]{0,18}$/.test(record.price) && { price: BigInt(record.price) }),
-    // How many days the artist promises to answer a Q&A slot's question in.
-    ...(Number.isSafeInteger(record.answerWithin) && record.answerWithin > 0 && { answerWithin: record.answerWithin }),
     closed: record.closed === true,
   };
 };
@@ -166,43 +164,6 @@ export async function checkins(state, artist, id) {
 }
 
 /**
- * A question as its holder wrote it (write.mjs `question`): `{ text, at? }`,
- * `at` the asker's clock in Unix milliseconds. The asker sets `at`, so it
- * says when they say they asked; a plain-text value is a question with no time.
- */
-export function asked(value) {
-  if (typeof value !== "string") return undefined;
-  const record = parse(value);
-  if (isObject(record) && typeof record.text === "string")
-    return { text: record.text, ...(Number.isSafeInteger(record.at) && record.at > 0 && { at: record.at }) };
-  return { text: value };
-}
-
-/**
- * The questions on a Q&A listing: for each slot whose holder asked one,
- * `{ ticket, value, text, at?, answer? }`, `value` the record as stored. A question counts only from the slot's
- * current holder, so a slot sold on carries its new holder's question. An
- * answer names the question it answers (write.mjs `answer`), so it counts
- * only while the slot still asks that question.
- */
-export async function questions(state, artist, name) {
-  const slots = await tickets(state, artist, name);
-  const found = await Promise.all(
-    slots.map(async (slot) => {
-      const [value, answered] = await Promise.all([
-        state.get(`user/${slot.holder}/question/${artist}/${slot.id}`),
-        state.get(`user/${artist}/answer/${slot.id}`),
-      ]);
-      if (value === undefined) return undefined;
-      const record = parse(answered);
-      const answer = isObject(record) && record.question === value && typeof record.answer === "string" ? record.answer : undefined;
-      return { ticket: slot, value, ...asked(value), ...(answer !== undefined && { answer }) };
-    }),
-  );
-  return found.filter(Boolean);
-}
-
-/**
  * The tickets of listing `name` checked in by the artist or their staff, as
  * a set of ids: one read of the listing's check-ins, not one per ticket.
  */
@@ -217,26 +178,4 @@ export async function checkedIn(state, artist, name) {
     if (trusted.has(rest.slice(cut + 1))) found.add(rest.slice(0, cut));
   }
   return found;
-}
-
-/**
- * The shipping records for merch listing `name`: for each item whose holder
- * left one, `{ ticket, sealed }`, opened by the artist with ship.mjs `open`.
- * Like a question, a record counts only from the item's current holder.
- */
-export async function shipments(state, artist, name) {
-  const items = await tickets(state, artist, name);
-  const found = await Promise.all(
-    items.map(async (item) => {
-      const sealed = await state.get(`user/${item.holder}/ship/${artist}/${item.id}`);
-      return sealed === undefined ? undefined : { ticket: item, sealed };
-    }),
-  );
-  return found.filter(Boolean);
-}
-
-/** The merch items of `artist` the artist marked shipped (write.mjs `shipped`), as a set of ids. */
-export async function shipped(state, artist) {
-  const prefix = `user/${artist}/shipped/`;
-  return new Set((await collect(state.list(prefix))).map(([key]) => key.slice(prefix.length)));
 }
