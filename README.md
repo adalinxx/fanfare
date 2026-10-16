@@ -40,7 +40,7 @@ are the items, and the holder of one leaves a shipping address sealed to the
 artist.
 
 Profiles are not on artist chains: an artist's name, picture and site are
-their card on the shared profile chain, `Nexus/moniker` (Moniker, `~/src/moniker`),
+their card on the shared profile chain, `Nexus/moniker` (Moniker, github.com/adalinxx/moniker),
 keyed by address like every app's. Fanfare adds one field there,
 `app.fanfare.x25519`, the key fans seal shipping addresses to.
 
