@@ -116,7 +116,14 @@ function imageURL(chain, cid) {
   const key = `${chain.join("/")}|${cid}`;
   if (!images.has(key)) {
     const pending = (async () => {
-      const volume = await volumesFor(chain).get(cid);
+      // A node reading it from the artist's node may answer busy: ask again.
+      let volume;
+      for (let wait = 1000; !volume; wait *= 2) {
+        volume = await volumesFor(chain).get(cid).catch((error) => {
+          if (wait > 8000) throw error;
+          return new Promise((resolve) => setTimeout(resolve, wait));
+        });
+      }
       const file = sdk.decodeDagCbor(volume.bytes(cid));
       if (typeof file?.type !== "string" || !IMAGE_TYPES.test(file.type) || !(file.bytes instanceof Uint8Array) || file.bytes.length > IMAGE_MAX) return null;
       return URL.createObjectURL(new Blob([file.bytes], { type: file.type }));
@@ -547,7 +554,7 @@ function listingForm(coin) {
     <div class="row"><span><label for="nl-count">How many tickets</label><input id="nl-count" name="count" inputmode="numeric" value="100" required></span><span><label for="nl-price">Price, in ${esc(coin)}</label><input id="nl-price" name="price" inputmode="numeric" value="250" required></span></div>
     <div class="image-field"><label for="nl-image">Image <span class="muted">(optional)</span></label>
       ${settings.ownNode && settings.ownCookie
-        ? `<input id="nl-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><input type="hidden" name="media"><img class="preview" hidden alt=""><p class="small muted image-note">Your node, ${esc(settings.ownNode)}, keeps it and fans' nodes can serve it.</p>`
+        ? `<input id="nl-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif"><input type="hidden" name="media"><img class="preview" hidden alt=""><p class="small muted image-note">Your node, ${esc(settings.ownNode)}, keeps it. Fans see it while your node is online.</p>`
         : `<p class="small muted">Images are kept by your own node. <button class="linkish" type="button" data-act="settings">Set your node</button> to add one.</p>`}</div>
     <p class="small muted">Fans see how many exist. Once sold, a ticket is the fan's: they can give it away or sell it on at any price, and you can't take it back.</p>
     <div class="acts"><button class="btn primary" type="submit">Put on sale</button></div>

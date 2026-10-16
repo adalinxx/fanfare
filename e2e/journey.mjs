@@ -9,6 +9,7 @@
 // to Bob, whose earlier try at the same ticket the client explains. At the
 // door, Bob's wallet
 // signs a pass, the artist's staff checks him in, and the pass won't work twice.
+// The show's image is kept only by the artist's node; fans see it through theirs.
 //
 //   LATTICE=<lattice-node>/.build/debug/lattice \
 //   LATTICE_SDK=<lattice-sdk>/packages/sdk/dist/index.js node e2e/journey.mjs
@@ -20,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import * as door from "../client/door.mjs";
 import * as launch from "../client/launch.mjs";
 import * as market from "../client/market.mjs";
+import * as media from "../app/vendor/media.mjs";
 import * as read from "../client/read.mjs";
 import { explain } from "../client/refusal.mjs";
 import { chainSpec, premineRecipient, tip, view, volumeLoader } from "../client/state.mjs";
@@ -177,10 +179,13 @@ try {
   }
   console.log("a fan's node joined the artist chain while running; from it the client finds the artist in the genesis and the Fanfare policy in the spec");
 
-  // The artist sets up from their own node: a show and door staff.
+  // The artist sets up from their own node: a show with an image their node
+  // keeps, and door staff.
+  const image = media.mediaVolume(sdk, "image/png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await media.operator(`http://127.0.0.1:${artistNode.rpc}`, readFileSync(`${artistNode.root}/chains/Nexus/.cookie`, "utf8").trim()).pin(image);
   await lands("the artist's setup", artist, {
     actions: await write.changes(await state(artistNode), [
-      ...write.listing(artist.address, SHOW, { kind: "ticket", title: "Berlin", venue: "Tresor", date: "2026-12-01" }),
+      ...write.listing(artist.address, SHOW, { kind: "ticket", title: "Berlin", venue: "Tresor", date: "2026-12-01", media: image.cid }),
       ...write.mint(artist.address, `${SHOW}/A1`, { price: 250n }),
       ...write.mint(artist.address, `${SHOW}/A2`, { price: 250n }),
       ...write.staff(artist.address, staff.address),
@@ -188,6 +193,13 @@ try {
     payments: [{ to: bob.address, amount: 1000n }, { to: staff.address, amount: 10n }],
   }, async () => (await ticketOf(`${SHOW}/A2`))?.price === 250n, artistNode);
   console.log("the artist listed a show, named door staff, and sent Bob 1000 band and staff 10 for fees");
+
+  // The image, read by the page through the fan's node, which does not hold it.
+  const listed = (await read.listing(await state(), artist.address, SHOW)).media;
+  assert.equal(listed, image.cid);
+  const file = await until("the show's image through the fan's node", async () => sdk.decodeDagCbor((await volumes(fanNode).get(listed)).bytes(listed)));
+  assert.equal(file.type, "image/png");
+  console.log("the fan's node served the show's image, which only the artist's node keeps");
 
   // Alice buys the artist's coin with Fanfare coin, through the fan's node.
   const [coin, asked, swap] = [5000n, 300n, ["--swap-nonce", "1", "--demand", "300"]];
