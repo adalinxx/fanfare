@@ -55,7 +55,7 @@ python3 -m http.server 8765   # from the repository root, then open
                               # http://127.0.0.1:8765/app/?node=<node URL>
 ```
 
-`vendor/` holds the browser bundle of `@adalinxx/lattice-sdk`
+`vendor/` holds the browser bundle of `@0xLattice/lattice-sdk`
 (`esbuild --bundle --format=esm`, as Stoa's), `qrcode-generator` 2.0.4
 (MIT), Moniker's `client/media.mjs` (commit e8c9b9c), and Moniker's `src/records/profile.mjs` (github.com/adalinxx/moniker-sdk, tag v0.1.1). The
 fonts in `fonts/` are Bricolage Grotesque and Instrument Sans (SIL Open Font
