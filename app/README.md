@@ -1,8 +1,10 @@
 # Fanfare web app
 
 A static page: open `app/index.html` from any static host (it imports
-`../client/`). It reads every record by CID from the node in Settings
-(`?node=<url>` sets it too), checks it in the page, and asks the Lattice
+`../client/`). It reads every record by CID from the nodes that serve each
+chain, found from the node in Settings (`?node=<url>` sets it too): that
+node when it serves the chain, else the hosts the chain's directory declares
+(lattice-sdk's `ChainNodes`). It checks every record in the page, and asks the Lattice
 wallet (`window.lattice`) to sign: the page keeps no key and has no server.
 
 - **Home** (`#/`) lists the shows coming up, soonest first, across every

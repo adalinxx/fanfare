@@ -168,7 +168,7 @@ body.bare header.top { display: none; }
   <form data-act="settings">
     <h2 id="settings-title">Settings</h2>
     <label for="s-node">Node</label><input id="s-node" name="node" class="mono" placeholder="https://your-node.example" required>
-    <p class="small muted">Fanfare reads every record from this node and checks it by its hash, so the node can withhold but not forge. Your wallet sends writes through its own node.</p>
+    <p class="small muted">Fanfare reads each chain from this node, or from the nodes it says serve the chain, and checks every record by its hash, so the node can withhold but not forge. Your wallet sends writes through its own node.</p>
     <label for="s-home">Home chain</label><input id="s-home" name="home" class="mono">
     <label for="s-profile">Profile chain (Moniker)</label><input id="s-profile" name="profile" class="mono">
     <label for="s-origins">Other Fanfare sites this door accepts passes from</label><input id="s-origins" name="origins" class="mono" placeholder="https://fanfare.example">

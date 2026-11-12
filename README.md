@@ -12,8 +12,8 @@ Both run the same records and policy.
 
 **Trial.** Until `Nexus/fanfare` launches, the app defaults to a trial on
 testnet: home chain `Nexus/testnet/fanfare-a5688b`, profiles on Moniker's
-trial `Nexus/testnet/moniker-da6f57`, read from
-`https://lattice-testnet-apps-iad.fly.dev` (or its twin in `ams`). Settings, or
+trial `Nexus/testnet/moniker-da6f57`, read from the nodes that serve each
+chain, found from `https://lattice-testnet-apps-iad.fly.dev`. Settings, or
 `?node=`, `?home=` and `?profile=`, point it elsewhere.
 
 ## Records

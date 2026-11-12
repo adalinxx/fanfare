@@ -70,10 +70,18 @@ const money = (amount, unit) => `${coins(amount)} ${esc(unit)}`;
 
 // Reading.
 
-const volumesFor = (chain) => new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${nodeURL()}/volumes`, { chainPath: chain }));
+// Each chain is read from the nodes that serve it: the node in Settings when
+// it serves the chain, then the hosts the chain's directory declares (the
+// SDK's ChainNodes). Made again when Settings change.
+const browserFetch = (...args) => fetch(...args);
+let nodes;
+const chainNodes = () => (nodes ??= new sdk.ChainNodes(nodeURL(), { fetch: browserFetch }));
+const volumesOn = (base, chain) => new sdk.VolumeClient(new sdk.HTTPVolumeTransport(`${base}/volumes`, { chainPath: chain }));
 
-async function api(path, chain) {
-  const url = new URL(path, `${nodeURL()}/`);
+const api = (path, chain) => chainNodes().read(chain, (node) => apiOn(node.url, path, chain));
+
+async function apiOn(base, path, chain) {
+  const url = new URL(path, `${base}/`);
   if (chain) url.searchParams.set("chainPath", chain.join("/"));
   const response = await fetch(url, { cache: "no-store" });
   if (response.status === 404) return undefined;
@@ -82,10 +90,12 @@ async function api(path, chain) {
 }
 
 /** The chain's state at the node's tip, as `{ get, list }`. */
-async function stateOf(chain) {
-  const volumes = volumesFor(chain);
-  const { generalStateCID } = await tip(sdk, nodeURL(), chain, volumes);
-  return view(volumeLoader(volumes, sdk.decodeDagCbor), generalStateCID);
+function stateOf(chain) {
+  return chainNodes().read(chain, async (node) => {
+    const volumes = volumesOn(node.url, chain);
+    const { generalStateCID } = await tip(sdk, node.url, chain, volumes);
+    return view(volumeLoader(volumes, sdk.decodeDagCbor), generalStateCID);
+  });
 }
 
 /**
@@ -119,7 +129,7 @@ function imageURL(chain, cid) {
       // A node reading it from the artist's node may answer busy: ask again.
       let volume;
       for (let wait = 1000; !volume; wait *= 2) {
-        volume = await volumesFor(chain).get(cid).catch((error) => {
+        volume = await chainNodes().read(chain, (node) => volumesOn(node.url, chain).get(cid)).catch((error) => {
           if (wait > 8000) throw error;
           return new Promise((resolve) => setTimeout(resolve, wait));
         });
@@ -146,8 +156,10 @@ function showImages(root) {
 
 /** The rules a chain runs, read once for the page's life. */
 function specOf(chain) {
-  const volumes = volumesFor(chain);
-  return tip(sdk, nodeURL(), chain, volumes).then((t) => chainSpec(sdk, volumes, t.specCID));
+  return chainNodes().read(chain, (node) => {
+    const volumes = volumesOn(node.url, chain);
+    return tip(sdk, node.url, chain, volumes).then((t) => chainSpec(sdk, volumes, t.specCID));
+  });
 }
 
 /**
@@ -163,7 +175,7 @@ function sellerInfo(key) {
       : (async () => {
           if (!isArtistName(key)) throw new Error(`${key} isn't an artist's name`);
           const chain = chainOf(key);
-          const [artist, spec] = await Promise.all([premineRecipient(sdk, nodeURL(), chain, volumesFor(chain)), specOf(chain)]);
+          const [artist, spec] = await Promise.all([chainNodes().read(chain, (node) => premineRecipient(sdk, node.url, chain, volumesOn(node.url, chain))), specOf(chain)]);
           return { key, name: key, chain, artist, coin: key, own: true, fanfare: read.runsFanfare(spec) };
         })();
     pending.catch(() => sellers.delete(key));
@@ -682,7 +694,7 @@ async function showMarket(selling, box = $("#market"), { chain = page.chain, coi
   box.innerHTML = `<p class="small muted">Reading offers…</p>`;
   let offers;
   try {
-    offers = await market.offers(nodeURL(), chain);
+    offers = await chainNodes().read(chain, (node) => market.offers(node.url, chain));
   } catch (error) {
     box.innerHTML = `<p class="small warn-text">${esc(error.message)}</p>`;
     return;
@@ -1091,6 +1103,7 @@ function saveSettings(form) {
     ownCookie: data.ownCookie.trim(),
   });
   store.set("settings", settings);
+  nodes = undefined;
   sellers.clear();
   fees.clear();
   homePending = undefined;
